@@ -1857,6 +1857,21 @@ static void HandleFormatAttr(Decl *d, const AttributeList &Attr, Sema &S) {
                                           FirstArg.getZExtValue()));
 }
 
+static void HandleTeslaAttr(Decl *d, const AttributeList &Attr, Sema &S) {
+  if (Attr.getNumArgs() != 0) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments) << 0;
+    return;
+  }
+
+  if (!isa<TypeDecl>(d)) {
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+      << Attr.getName() << 9 /* class */;
+    return;
+  }
+
+  d->addAttr(::new (S.Context) TeslaAttr(Attr.getLoc(), S.Context));
+}
+
 static void HandleTransparentUnionAttr(Decl *d, const AttributeList &Attr,
                                        Sema &S) {
   // check the attribute arguments.
@@ -2806,6 +2821,7 @@ static void ProcessInheritableDeclAttr(Scope *scope, Decl *D,
   case AttributeList::AT_weak:        HandleWeakAttr        (D, Attr, S); break;
   case AttributeList::AT_weakref:     HandleWeakRefAttr     (D, Attr, S); break;
   case AttributeList::AT_weak_import: HandleWeakImportAttr  (D, Attr, S); break;
+  case AttributeList::AT_tesla:       HandleTeslaAttr       (D, Attr, S); break;
   case AttributeList::AT_transparent_union:
     HandleTransparentUnionAttr(D, Attr, S);
     break;

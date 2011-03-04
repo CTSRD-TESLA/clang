@@ -445,6 +445,11 @@ def Pascal : InheritableAttr {
   let Spellings = ["pascal", "__pascal"];
 }
 
+def Tesla: InheritableAttr {
+  let Spellings = ["tesla", "__tesla"];
+  let Subjects = [Tag];
+}
+
 def TransparentUnion : InheritableAttr {
   let Spellings = ["transparent_union"];
 }
