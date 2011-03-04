@@ -346,6 +346,9 @@ KEYWORD(__fastcall                  , KEYALL)
 KEYWORD(__thiscall                  , KEYALL)
 KEYWORD(__forceinline               , KEYALL)
 
+// TESLA Extension.
+KEYWORD(__tesla_assert              , KEYALL)
+
 // OpenCL-specific keywords (see OpenCL 1.1 [6.1.9])
 KEYWORD(__kernel                    , KEYOPENCL)
 ALIAS("kernel", __kernel            , KEYOPENCL)
