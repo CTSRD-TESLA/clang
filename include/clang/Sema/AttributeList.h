@@ -148,6 +148,7 @@ public:
     AT_sentinel,
     AT_shared,
     AT_stdcall,
+    AT_tesla,
     AT_thiscall,
     AT_transparent_union,
     AT_unavailable,
