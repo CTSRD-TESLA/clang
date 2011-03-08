@@ -182,8 +182,10 @@ void TeslaInstrumenter::Visit(
 
   if (CompoundStmt *c = dyn_cast<CompoundStmt>(s)) {
     cs = c;
+    /*
     if (!teslaDataType.isNull())
       addTeslaDeclaration(c, dc, ast);
+    */
 
   } else if (DeclStmt *ds = dyn_cast<DeclStmt>(s)) {
     typedef DeclStmt::decl_iterator Iterator;
