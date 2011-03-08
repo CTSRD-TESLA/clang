@@ -84,56 +84,9 @@ private:
   }
 
 public:
-  class BaseInfo {
-    private:
-      Expr *expression;
-      QualType structType;
-      FieldDecl *field;
-
-    public:
-      BaseInfo(Expr *e = NULL, QualType structType = QualType(),
-               FieldDecl *f = NULL)
-        : expression(e),
-          structType(structType),
-          field(f) {
-      }
-
-      bool isValid() {
-        return
-          (expression != NULL) and !structType.isNull() and (field != NULL);
-      }
-
-      void buildCall(ASTContext &ast, Expr *newValue = NULL) {
-        assert(isValid());
-
-        if (!expression->getType()->isPointerType()) {
-          expression = new (ast) UnaryOperator(
-              expression, UO_AddrOf, structType, VK_RValue, OK_Ordinary,
-              expression->getLocStart());
-        }
-
-        llvm::errs()
-          << PREASSIGN_CHECKER_PREFIX
-          << QualType::getAsString(
-              field->getParent()->getTypeForDecl(),
-              Qualifiers()).substr(7)
-          << "(";
-        expression->dumpPretty(ast);
-        llvm::errs()
-          << ", " << field->getFieldIndex()
-          << ", ";
-
-        if (newValue) newValue->dumpPretty(ast);
-        else llvm::errs() << "<no expression yet>";
-
-        llvm::errs()
-          << ")";
-      }
-  };
-
-  BaseInfo buildBase(Expr *e) {
+  AssignHook buildAssignHook(Expr *e) {
     MemberExpr *me = dyn_cast<MemberExpr>(e);
-    if (me == NULL) return BaseInfo();
+    if (me == NULL) return AssignHook();
 
     // Do we even want to instrument this type?
     QualType baseType = me->getBase()->getType();
@@ -143,7 +96,7 @@ public:
     assert(rt != NULL && "MemberExpr base should be a structure");
     baseType = rt->desugar();
 
-    if (!needToInstrument(baseType)) return BaseInfo();
+    if (!needToInstrument(baseType)) return AssignHook();
 
     // Which of the structure's fields are we accessing?
     const RecordDecl *decl = rt->getDecl();
@@ -157,7 +110,7 @@ public:
         break;
       }
 
-    return BaseInfo(me->getBase(), baseType, field);
+    return AssignHook(me->getBase(), baseType, field);
   }
 
   /// Recursively visits an Expr.
@@ -172,17 +125,20 @@ public:
       VisitExpression(rhs, dc, ast);
 
       if (o->isAssignmentOp()) {
-        BaseInfo base = buildBase(lhs);
-        if (base.isValid()) {
+        AssignHook hook = buildAssignHook(lhs);
+        hook.setNewValue(rhs);
+
+        if (hook.isValid()) {
           Diagnostic &D = ast.getDiagnostics();
           unsigned diagID = D.getCustomDiagID(
             Diagnostic::Warning, "Assignment needs TESLA instrumentation");
           D.Report(e->getLocStart(), diagID)
             << e->getSourceRange();
 
-          llvm::errs() << "call: ";
-          base.buildCall(ast, rhs);
-          llvm::errs() << "\n\n";
+          llvm::errs()
+            << "call: "
+            << hook.create(ast)
+            << "\n\n";
         }
       }
 #if 0
