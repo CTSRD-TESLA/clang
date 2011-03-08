@@ -97,9 +97,7 @@ ASTConsumer* FrontendAction::CreateWrappedASTConsumer(CompilerInstance &CI,
   if (CI.getFrontendOpts().AddPluginActions.size() == 0)
     return Consumer;
 
-  // Make sure the non-plugin consumer is first, so that plugins can't
-  // modifiy the AST.
-  std::vector<ASTConsumer*> Consumers(1, Consumer);
+  std::vector<ASTConsumer*> Consumers;
 
   for (size_t i = 0, e = CI.getFrontendOpts().AddPluginActions.size();
        i != e; ++i) { 
@@ -117,6 +115,10 @@ ASTConsumer* FrontendAction::CreateWrappedASTConsumer(CompilerInstance &CI,
       }
     }
   }
+
+  // TODO: A command-line argument to control where the non-plugin consumer
+  // goes in the pipeline (before or after plugins work with the AST).
+  Consumers.push_back(Consumer);
 
   return new MultiplexConsumer(Consumers);
 }
