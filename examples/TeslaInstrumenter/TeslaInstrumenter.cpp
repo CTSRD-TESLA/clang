@@ -73,8 +73,6 @@ private:
   QualType teslaDataType;
   set<const Type*> toInstrument;
 
-  typedef Stmt::child_iterator StmtIterator;
-
   bool needToInstrument(const Type* t) const {
     return (toInstrument.find(t) != toInstrument.end());
   }
@@ -96,9 +94,6 @@ public:
   AssignHook buildAssignHook(Expr *e);
 
 
-
-
-
   // ASTConsumer implementation.
 
   /// Make note if a tag has been tagged with __tesla or the like.
@@ -118,21 +113,6 @@ protected:
   }
 
   bool ParseArgs(const CompilerInstance &CI, const vector<string>& args) {
-    for (unsigned i = 0, e = args.size(); i != e; ++i) {
-      llvm::errs() << "TeslaInstrumenter arg = " << args[i] << "\n";
-
-      // Example error handling.
-      if (args[i] == "-an-error") {
-        Diagnostic &D = CI.getDiagnostics();
-        unsigned DiagID = D.getCustomDiagID(
-          Diagnostic::Error, "invalid argument '" + args[i] + "'");
-        D.Report(DiagID);
-        return false;
-      }
-    }
-    if (args.size() and args[0] == "help")
-      PrintHelp(llvm::errs());
-
     return true;
   }
 
