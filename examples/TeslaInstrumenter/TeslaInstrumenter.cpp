@@ -42,6 +42,31 @@ class Instrumentation {
 };
 
 
+/// A hook to call out to an external checker.
+class AssignHook : public Instrumentation {
+  private:
+    Expr *expression;
+    QualType structType;
+    FieldDecl *field;
+    Expr *newValue;
+
+  public:
+    AssignHook(Expr *e = NULL, QualType structType = QualType(),
+             FieldDecl *f = NULL);
+
+    void setNewValue(Expr *e) { newValue = e; }
+
+    inline bool isValid() {
+      return
+        (expression != NULL) and (field != NULL) and (newValue != NULL)
+        and !structType.isNull();
+    }
+
+    virtual Stmt* create(ASTContext &ast);
+};
+
+
+
 /// Instruments assignments to tag fields with TESLA assertions.
 class TeslaInstrumenter : public ASTConsumer {
 private:
@@ -372,5 +397,41 @@ protected:
 
 static FrontendPluginRegistry::Add<TeslaAction>
 X("tesla", "Add TESLA instrumentation");
+
+
+AssignHook::AssignHook(Expr *e, QualType structType, FieldDecl *f)
+        : expression(e),
+          structType(structType),
+          field(f) {
+}
+
+Stmt* AssignHook::create(ASTContext &ast) {
+  assert(isValid());
+
+  if (!expression->getType()->isPointerType()) {
+    expression = new (ast) UnaryOperator(
+        expression, UO_AddrOf, structType, VK_RValue, OK_Ordinary,
+        expression->getLocStart());
+  }
+
+  llvm::errs()
+    << PREASSIGN_CHECKER_PREFIX
+    << QualType::getAsString(
+        field->getParent()->getTypeForDecl(),
+        Qualifiers()).substr(7)
+    << "(";
+  expression->dumpPretty(ast);
+  llvm::errs()
+    << ", " << field->getFieldIndex()
+    << ", ";
+
+  if (newValue) newValue->dumpPretty(ast);
+  else llvm::errs() << "<no expression yet>";
+
+  llvm::errs()
+    << ")";
+
+  return new (ast) NullStmt(expression->getLocStart());
+}
 
 }
