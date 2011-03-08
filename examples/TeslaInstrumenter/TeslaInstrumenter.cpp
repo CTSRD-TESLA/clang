@@ -17,6 +17,31 @@ namespace {
 #define PREASSIGN_CHECKER_PREFIX "_check_store_"
 
 
+/// Some instrumentation code.
+///
+/// For instance, before assigning to a variable, an Instrumentation instance
+/// might call out to a function which says "yes, this is ok."
+class Instrumentation {
+  public:
+    /// Creates the actual instrumentation code.
+    virtual Stmt* create(ASTContext &ast) = 0;
+
+    void insertBefore(CompoundStmt *c, Stmt *before, ASTContext &ast) {
+      vector<Stmt*> newChildren;
+      for (StmtRange s = c->children(); s; s++) {
+        if (*s == before) newChildren.push_back(create(ast));
+        newChildren.push_back(*s);
+      }
+
+      c->setStmts(ast, &newChildren[0], newChildren.size());
+    }
+
+    void insert(CompoundStmt *c, ASTContext &ast) {
+      insertBefore(c, *c->children(), ast);
+    }
+};
+
+
 /// Instruments assignments to tag fields with TESLA assertions.
 class TeslaInstrumenter : public ASTConsumer {
 private:
