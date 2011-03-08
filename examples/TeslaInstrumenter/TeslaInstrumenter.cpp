@@ -141,35 +141,6 @@ public:
             << "\n\n";
         }
       }
-#if 0
-    } else if (DeclRefExpr *dre = dyn_cast<DeclRefExpr>(e)) {
-      ValueDecl *d = dre->getDecl();
-      /*
-      llvm::errs()
-        << "DeclRefExpr: '" << d->getName()
-        << "' (of type '" << d->getType().getAsString()
-        << "')\n";
-
-      dre->dump();
-        */
-
-      QualType t = d->getType();
-      while (t->isPointerType()) {
-        t = t->getPointeeType();
-       // ->getPointeeType();
-      }
-
-      /*
-      if (needToInstrument(t)) {
-        llvm::errs() << "AHA! We need to instrument this!\n";
-
-        llvm::errs()
-          << "call check_" << t.getAsString()
-          << "(" << d->getName()
-          << "\n";
-      }
-      */
-#endif
     }
     else {
       return;
@@ -245,10 +216,8 @@ public:
   /// Recursively visits a Decl.
   void VisitDecl(Decl *d, DeclContext *context, ASTContext &ast) {
     // We're not interested in function declarations, only definitions.
-    if (FunctionDecl *f = dyn_cast<FunctionDecl>(d)) {
+    if (FunctionDecl *f = dyn_cast<FunctionDecl>(d))
       if (!f->isThisDeclarationADefinition()) return;
-//      if (f->getName() != "helper") return;
-    }
 
     if (DeclContext *dc = dyn_cast<DeclContext>(d)) {
       VisitDeclContext(dc, ast);
