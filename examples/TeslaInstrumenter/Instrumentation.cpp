@@ -18,9 +18,9 @@ FunctionDecl *declareFn(const string& name, QualType returnType,
 
 
 
-void Instrumentation::insertBefore(
-    CompoundStmt *c, const Stmt *before, ASTContext &ast)
-{
+void Instrumentation::insert(
+    CompoundStmt *c, const Stmt *before, ASTContext &ast) {
+
   vector<Stmt*> newChildren;
   for (StmtRange s = c->children(); s; s++) {
     if (*s == before) newChildren.push_back(create(ast));
@@ -33,7 +33,8 @@ void Instrumentation::insertBefore(
 
 
 
-AssignHook::AssignHook(MemberExpr *lhs, Expr *rhs) : lhs(lhs), rhs(rhs) {
+FieldAssignment::FieldAssignment(MemberExpr *lhs, Expr *rhs)
+    : lhs(lhs), rhs(rhs) {
   assert(isa<FieldDecl>(lhs->getMemberDecl()));
   this->field = dyn_cast<FieldDecl>(lhs->getMemberDecl());
 
@@ -43,7 +44,7 @@ AssignHook::AssignHook(MemberExpr *lhs, Expr *rhs) : lhs(lhs), rhs(rhs) {
 
 
 
-Stmt* AssignHook::create(ASTContext &ast) {
+Stmt* FieldAssignment::create(ASTContext &ast) {
   // This is where we pretend the call was located.
   SourceLocation loc = lhs->getLocStart();
 
@@ -77,9 +78,9 @@ Stmt* AssignHook::create(ASTContext &ast) {
 }
 
 
-const string AssignHook::PREFIX = "__tesla_check_field_assign_";
+const string FieldAssignment::PREFIX = "__tesla_check_field_assign_";
 
-string AssignHook::checkerName() const {
+string FieldAssignment::checkerName() const {
   string typeName =
     QualType::getAsString(structType.getTypePtr(), Qualifiers());
 

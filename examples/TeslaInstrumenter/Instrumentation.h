@@ -15,19 +15,22 @@ class Instrumentation {
     /// Creates the actual instrumentation code.
     virtual clang::Stmt* create(clang::ASTContext &ast) = 0;
 
-    void insertBefore(
-        clang::CompoundStmt *c,
-        const clang::Stmt *before,
+    /// Inserts the instrumentation before a particular Stmt.
+    void insert(clang::CompoundStmt *c, const clang::Stmt *before,
         clang::ASTContext &ast);
 
+    /// Inserts the instrumentation at the beginning of a CompoundStmt.
     void insert(clang::CompoundStmt *c, clang::ASTContext &ast) {
-      insertBefore(c, *c->children(), ast);
+      insert(c, *c->children(), ast);
     }
+
+    /// Appends the instrumentation to the end of a CompoundStmt.
+    void append(clang::CompoundStmt *c, clang::ASTContext &ast);
 };
 
 
-/// A hook to call out to an external checker.
-class AssignHook : public Instrumentation {
+/// A value is being assigned to a structure of interest.
+class FieldAssignment : public Instrumentation {
   private:
     const static std::string PREFIX;
 
@@ -40,7 +43,7 @@ class AssignHook : public Instrumentation {
     std::string checkerName() const;
 
   public:
-    AssignHook(clang::MemberExpr *lhs, clang::Expr *rhs);
+    FieldAssignment(clang::MemberExpr *lhs, clang::Expr *rhs);
     virtual clang::Stmt* create(clang::ASTContext &ast);
 };
 
