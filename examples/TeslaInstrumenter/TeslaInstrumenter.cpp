@@ -14,7 +14,16 @@ using namespace std;
 
 namespace {
 
-#define PREASSIGN_CHECKER_PREFIX "_check_store_"
+/// Explicitly cast an expression to a type (probably only works for casting
+/// things to pointer types).
+Expr* cast(Expr *from, QualType to, ASTContext &ast);
+
+/// Take the address of an expression result.
+Expr* addressOf(Expr*, ASTContext&, SourceLocation loc = SourceLocation());
+
+/// Declare a function.
+FunctionDecl *declareFn(const string& name, QualType returnType,
+    const vector<QualType>& argTypes, ASTContext &ast);
 
 
 /// Some instrumentation code.
@@ -26,7 +35,7 @@ class Instrumentation {
     /// Creates the actual instrumentation code.
     virtual Stmt* create(ASTContext &ast) = 0;
 
-    void insertBefore(CompoundStmt *c, Stmt *before, ASTContext &ast) {
+    void insertBefore(CompoundStmt *c, const Stmt *before, ASTContext &ast) {
       vector<Stmt*> newChildren;
       for (StmtRange s = c->children(); s; s++) {
         if (*s == before) newChildren.push_back(create(ast));
@@ -45,26 +54,20 @@ class Instrumentation {
 /// A hook to call out to an external checker.
 class AssignHook : public Instrumentation {
   private:
-    Expr *expression;
+    const static std::string PREFIX;
+
+    MemberExpr *lhs;
+    Expr *rhs;
     QualType structType;
     FieldDecl *field;
-    Expr *newValue;
+
+    /// The name of the function which we will call to check this assignment.
+    std::string checkerName() const;
 
   public:
-    AssignHook(Expr *e = NULL, QualType structType = QualType(),
-             FieldDecl *f = NULL);
-
-    void setNewValue(Expr *e) { newValue = e; }
-
-    inline bool isValid() {
-      return
-        (expression != NULL) and (field != NULL) and (newValue != NULL)
-        and !structType.isNull();
-    }
-
+    AssignHook(MemberExpr *lhs, Expr *rhs);
     virtual Stmt* create(ASTContext &ast);
 };
-
 
 
 /// Instruments assignments to tag fields with TESLA assertions.
@@ -72,6 +75,9 @@ class TeslaInstrumenter : public ASTConsumer {
 private:
   QualType teslaDataType;
   set<const Type*> toInstrument;
+
+  Diagnostic *diag;
+  unsigned int teslaWarningId;
 
   bool needToInstrument(const Type* t) const {
     return (toInstrument.find(t) != toInstrument.end());
@@ -81,22 +87,26 @@ private:
     return needToInstrument(t.getTypePtr());
   }
 
+  DiagnosticBuilder warnAddingInstrumentation(SourceLocation) const;
+
+
 public:
   void Visit(DeclContext *dc, ASTContext &ast);
   void Visit(Decl *d, DeclContext *context, ASTContext &ast);
-  void Visit(Stmt *s, const CompoundStmt *cs, DeclContext* context,
+  void Visit(CompoundStmt *cs, DeclContext* context, ASTContext &ast);
+  void Visit(Stmt *s, CompoundStmt *cs, DeclContext* context,
       ASTContext &ast);
-  void Visit(const Expr *e, const CompoundStmt *c, const Stmt *s,
+  void Visit(Expr *e, Stmt *s, CompoundStmt *c,
       DeclContext* dc, ASTContext &ast);
 
   /// Adds a 'struct tesla_data' declaration to a CompoundStmt.
   void addTeslaDeclaration(
       CompoundStmt *c, DeclContext *dc, ASTContext &ast);
 
-  AssignHook buildAssignHook(Expr *e);
-
 
   // ASTConsumer implementation.
+
+  virtual void Initialize(ASTContext& ast);
 
   /// Make note if a tag has been tagged with __tesla or the like.
   virtual void HandleTagDeclDefinition(TagDecl *tag);
@@ -126,7 +136,13 @@ X("tesla", "Add TESLA instrumentation");
 
 
 
-// ********* Implementation (still in the anonymous namespace). ********
+// ********* TeslaInstrumenter (still in the anonymous namespace). ********
+
+void TeslaInstrumenter::Initialize(ASTContext& ast) {
+  diag = &ast.getDiagnostics();
+  teslaWarningId = diag->getCustomDiagID(
+      Diagnostic::Warning, "Adding TESLA instrumentation");
+}
 
 void TeslaInstrumenter::HandleTopLevelDecl(DeclGroupRef d) {
   for (DeclGroupRef::iterator i = d.begin(); i != d.end(); i++) {
@@ -136,8 +152,9 @@ void TeslaInstrumenter::HandleTopLevelDecl(DeclGroupRef d) {
 }
 
 void TeslaInstrumenter::HandleTagDeclDefinition(TagDecl *tag) {
-  if (tag->getAttr<TeslaAttr>())
+  if (tag->getAttr<TeslaAttr>()) {
     toInstrument.insert(tag->getTypeForDecl());
+  }
 
   else if (tag->getName() == "tesla_data")
     teslaDataType = tag->getTypeForDecl()->getCanonicalTypeInternal();
@@ -155,9 +172,10 @@ void TeslaInstrumenter::Visit(DeclContext *dc, ASTContext &ast) {
 
 void TeslaInstrumenter::Visit(Decl *d, DeclContext *context, ASTContext &ast) {
   // We're not interested in function declarations, only definitions.
-  if (FunctionDecl *f = dyn_cast<FunctionDecl>(d))
+  if (FunctionDecl *f = dyn_cast<FunctionDecl>(d)) {
     if (!f->isThisDeclarationADefinition())
       return;
+  }
 
   if (DeclContext *dc = dyn_cast<DeclContext>(d)) {
     Visit(dc, ast);
@@ -166,108 +184,69 @@ void TeslaInstrumenter::Visit(Decl *d, DeclContext *context, ASTContext &ast) {
 
   if (d->hasBody()) {
     assert(isa<CompoundStmt>(d->getBody()));
-    Visit(d->getBody(), dyn_cast<CompoundStmt>(d->getBody()), context, ast);
+    Visit(dyn_cast<CompoundStmt>(d->getBody()), context, ast);
   }
 }
 
 void TeslaInstrumenter::Visit(
-    Stmt *s, const CompoundStmt *cs, DeclContext* dc, ASTContext &ast) {
+    CompoundStmt *cs, DeclContext* dc, ASTContext &ast) {
 
-  if (s == NULL) return;
+  assert(cs != NULL);
 
-  if (Expr *e = dyn_cast<Expr>(s)) {
-    Visit(e, cs, s, dc, ast);
-    return;
+  for (StmtRange child = cs->children(); child; child++) {
+    // It's perfectly legitimate to have a null child (think an IfStmt with
+    // no 'else' clause), but dyn_cast() will choke on it.
+    if (*child == NULL) continue;
+
+    if (Expr *e = dyn_cast<Expr>(*child)) Visit(e, e, cs, dc, ast);
+    else Visit(*child, cs, dc, ast);
   }
-
-  if (CompoundStmt *c = dyn_cast<CompoundStmt>(s)) {
-    cs = c;
-    /*
-    if (!teslaDataType.isNull())
-      addTeslaDeclaration(c, dc, ast);
-    */
-
-  } else if (DeclStmt *ds = dyn_cast<DeclStmt>(s)) {
-    typedef DeclStmt::decl_iterator Iterator;
-    for (Iterator i = ds->decl_begin(); i != ds->decl_end(); i++) {
-      if (VarDecl *vd = dyn_cast<VarDecl>(*i)) {
-        const Expr *e = vd->getAnyInitializer();
-        if (e != NULL) Visit(e, cs, s, dc, ast);
-      }
-    }
-  }
-
-  for (StmtRange child = s->children(); child; child++)
-    Visit(*child, cs, dc, ast);
 }
 
+void TeslaInstrumenter::Visit(
+    Stmt *s, CompoundStmt *cs, DeclContext* dc, ASTContext &ast) {
 
-void TeslaInstrumenter::Visit(const Expr *e,
-    const CompoundStmt *cs, const Stmt *s, DeclContext* dc, ASTContext &ast) {
+  assert(s != NULL);
+
+  if (CompoundStmt *c = dyn_cast<CompoundStmt>(s)) Visit(c, dc, ast);
+  else
+    for (StmtRange child = s->children(); child; child++) {
+      // It's perfectly legitimate to have a null child (think an IfStmt with
+      // no 'else' clause), but dyn_cast() will choke on it.
+      if (*child == NULL) continue;
+
+      if (Expr *e = dyn_cast<Expr>(*child)) Visit(e, s, cs, dc, ast);
+      else Visit(*child, cs, dc, ast);
+    }
+}
+
+void TeslaInstrumenter::Visit(Expr *e,
+    Stmt *s, CompoundStmt *cs, DeclContext* dc, ASTContext &ast) {
+
+  assert(e != NULL);
 
   if (const BinaryOperator *o = dyn_cast<BinaryOperator>(e)) {
-    Expr *lhs = o->getLHS();
-    Expr *rhs = o->getRHS();
+    if (!o->isAssignmentOp()) return;
 
-    Visit(lhs, cs, s, dc, ast);
-    Visit(rhs, cs, s, dc, ast);
+    // We only care about assignments to structure fields.
+    MemberExpr *lhs = dyn_cast<MemberExpr>(o->getLHS());
+    if (lhs == NULL) return;
 
-    if (o->isAssignmentOp()) {
-      AssignHook base = buildAssignHook(lhs);
-      base.setNewValue(rhs);
+    // Do we want to instrument this type?
+    QualType baseType = lhs->getBase()->getType();
+    if (baseType->isPointerType()) baseType = baseType->getPointeeType();
+    if (!needToInstrument(baseType)) return;
 
-      if (base.isValid()) {
-        Diagnostic &D = ast.getDiagnostics();
-        unsigned diagID = D.getCustomDiagID(
-          Diagnostic::Warning, "Assignment needs TESLA instrumentation");
-        D.Report(e->getLocStart(), diagID)
-          << e->getSourceRange();
-
-        llvm::errs() << "call: ";
-        base.create(ast)->dumpPretty(ast);
-        llvm::errs() << " before '";
-        s->dumpPretty(ast);
-        llvm::errs() << "'\n\n";
-      }
-    }
+    AssignHook hook(lhs, o->getRHS());
+    warnAddingInstrumentation(e->getLocStart()) << e->getSourceRange();
+    hook.insertBefore(cs, s, ast);
   }
 
-  for (ConstStmtRange child = e->children(); child; child++) {
+  for (StmtRange child = e->children(); child; child++) {
     assert(isa<Expr>(*child) && "Non-Expr child of Expr");
-    Visit(dyn_cast<Expr>(*child), cs, s, dc, ast);
+    Visit(dyn_cast<Expr>(*child), s, cs, dc, ast);
   }
 }
-
-
-
-AssignHook TeslaInstrumenter::buildAssignHook(Expr *e) {
-  MemberExpr *me = dyn_cast<MemberExpr>(e);
-  if (me == NULL) return AssignHook();
-
-  // Do we even want to instrument this type?
-  QualType baseType = me->getBase()->getType();
-  while (baseType->isPointerType()) baseType = baseType->getPointeeType();
-
-  const RecordType *rt = baseType->getAsStructureType();
-  assert(rt != NULL && "MemberExpr base should be a structure");
-  baseType = rt->desugar();
-
-  if (!needToInstrument(baseType)) return AssignHook();
-
-  // Which of the structure's fields are we accessing?
-  const RecordDecl *decl = rt->getDecl();
-  FieldDecl *field = NULL;
-
-  string memberName = me->getMemberDecl()->getName();
-  typedef RecordDecl::field_iterator Iterator;
-  for (Iterator i = decl->field_begin(); i != decl->field_end(); i++)
-    if (i->getName() == memberName) {
-      field = *i;
-      break;
-    }
-
-    return AssignHook(me->getBase(), baseType, field);
-  }
 
 
 void TeslaInstrumenter::addTeslaDeclaration(
@@ -291,40 +270,113 @@ void TeslaInstrumenter::addTeslaDeclaration(
 }
 
 
-
-AssignHook::AssignHook(Expr *e, QualType structType, FieldDecl *f)
-        : expression(e),
-          structType(structType),
-          field(f) {
+DiagnosticBuilder
+TeslaInstrumenter::warnAddingInstrumentation(SourceLocation loc) const {
+   return diag->Report(loc, teslaWarningId);
 }
 
-Stmt* AssignHook::create(ASTContext &ast) {
-  assert(isValid());
 
-  if (!expression->getType()->isPointerType()) {
-    expression = new (ast) UnaryOperator(
-        expression, UO_AddrOf, structType, VK_RValue, OK_Ordinary,
-        expression->getLocStart());
+
+// ********* AssignHook (still in the anonymous namespace). ********
+
+AssignHook::AssignHook(MemberExpr *lhs, Expr *rhs) : lhs(lhs), rhs(rhs) {
+  assert(isa<FieldDecl>(lhs->getMemberDecl()));
+  this->field = dyn_cast<FieldDecl>(lhs->getMemberDecl());
+
+  this->structType = lhs->getBase()->getType();
+  if (structType->isPointerType()) structType = structType->getPointeeType();
+}
+
+
+
+Stmt* AssignHook::create(ASTContext &ast) {
+  // This is where we pretend the call was located.
+  SourceLocation loc = lhs->getLocStart();
+
+  // Get a pointer to the struct.
+  Expr *base = lhs->getBase();
+  if (!base->getType()->isPointerType()) base = addressOf(base, ast, loc);
+
+  // Create a function declaration within the context of the whole translation
+  // unit (this will be uniqued if necessary by the CG).
+  vector<QualType> argTypes(1, base->getType());
+  argTypes.push_back(ast.IntTy);
+  argTypes.push_back(ast.VoidPtrTy);
+
+  FunctionDecl *fn = declareFn(checkerName(), ast.VoidTy, argTypes, ast);
+
+  // Construct the expression that we will use to call said function.
+  Expr *fnExpr = new (ast) ImplicitCastExpr(
+        ImplicitCastExpr::OnStack, ast.getPointerType(fn->getType()),
+        CK_FunctionToPointerDecay, 
+        new (ast) DeclRefExpr(fn, fn->getType(), VK_RValue, loc), VK_RValue);
+
+  Expr* args[3] = {
+    base,
+    new (ast) IntegerLiteral(
+        ast, ast.MakeIntValue(field->getFieldIndex(), argTypes[1]),
+        argTypes[1], loc),
+    cast(rhs, argTypes[2], ast)
+  };
+
+  return new (ast) CallExpr(ast, fnExpr, args, 3, ast.VoidTy, VK_RValue, loc);
+}
+
+
+const string AssignHook::PREFIX = "__tesla_check_field_assign_";
+
+string AssignHook::checkerName() const {
+  string typeName =
+    QualType::getAsString(structType.getTypePtr(), Qualifiers());
+
+  // Replace all spaces with underscores (e.g. 'struct Foo' => 'struct_Foo')
+  size_t i;
+  while ((i = typeName.find(' ')) != string::npos) typeName.replace(i, 1, "_");
+
+  return PREFIX + typeName;
+}
+
+
+
+// ********* Helper functions (still in the anonymous namespace). ********
+
+Expr* cast(Expr *from, QualType to, ASTContext &ast) {
+  // A cast from foo* to void* is a BitCast.
+  CastKind castKind = CK_BitCast;
+
+  // If casting from an arithmetic type, modify the CastKind accordingly and
+  // remove all existing implicit casts.
+  if (from->getType()->isArithmeticType()) {
+    castKind = CK_IntegralToPointer;
+    from = from->IgnoreParenImpCasts();
   }
 
-  llvm::errs()
-    << PREASSIGN_CHECKER_PREFIX
-    << QualType::getAsString(
-        field->getParent()->getTypeForDecl(),
-        Qualifiers()).substr(7)
-    << "(";
-  expression->dumpPretty(ast);
-  llvm::errs()
-    << ", " << field->getFieldIndex()
-    << ", ";
+  return CStyleCastExpr::Create(ast, to, VK_RValue, castKind, from, NULL,
+      ast.getTrivialTypeSourceInfo(to), SourceLocation(), SourceLocation());
+}
 
-  if (newValue) newValue->dumpPretty(ast);
-  else llvm::errs() << "<no expression yet>";
+Expr* addressOf(Expr *e, ASTContext &ast, SourceLocation loc) {
+  return new (ast) UnaryOperator(e, UO_AddrOf,
+      ast.getPointerType(e->getType()), VK_RValue, OK_Ordinary, loc);
+}
 
-  llvm::errs()
-    << ")";
+FunctionDecl *declareFn(const string& name, QualType returnType,
+    const vector<QualType>& argTypes, ASTContext &ast) {
 
-  return new (ast) NullStmt(expression->getLocStart());
+  // The function doesn't throw exceptions, etc.
+  FunctionProtoType::ExtProtoInfo extraInfo;
+
+  QualType fnType = ast.getFunctionType(
+      ast.VoidTy, &argTypes[0], argTypes.size(), extraInfo);
+
+  FunctionDecl *fn = FunctionDecl::Create(ast, ast.getTranslationUnitDecl(),
+     SourceLocation(), DeclarationName(&ast.Idents.get(name)), fnType, NULL,
+     SC_Extern, SC_None);
+
+  // Add the created declaration to the translation unit.
+  ast.getTranslationUnitDecl()->addDecl(fn);
+
+  return fn;
 }
 
 }
