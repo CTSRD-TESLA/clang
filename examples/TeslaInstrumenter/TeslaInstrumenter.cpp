@@ -98,6 +98,8 @@ public:
       ASTContext &ast);
   void Visit(Expr *e, Stmt *s, CompoundStmt *c,
       DeclContext* dc, ASTContext &ast);
+  void Visit(
+      BinaryOperator *o, Stmt *s, CompoundStmt *cs, ASTContext &ast);
 
   /// Adds a 'struct tesla_data' declaration to a CompoundStmt.
   void addTeslaDeclaration(
@@ -225,27 +227,51 @@ void TeslaInstrumenter::Visit(Expr *e,
 
   assert(e != NULL);
 
-  if (const BinaryOperator *o = dyn_cast<BinaryOperator>(e)) {
-    if (!o->isAssignmentOp()) return;
-
-    // We only care about assignments to structure fields.
-    MemberExpr *lhs = dyn_cast<MemberExpr>(o->getLHS());
-    if (lhs == NULL) return;
-
-    // Do we want to instrument this type?
-    QualType baseType = lhs->getBase()->getType();
-    if (baseType->isPointerType()) baseType = baseType->getPointeeType();
-    if (!needToInstrument(baseType)) return;
-
-    AssignHook hook(lhs, o->getRHS());
-    warnAddingInstrumentation(e->getLocStart()) << e->getSourceRange();
-    hook.insertBefore(cs, s, ast);
-  }
+  if (BinaryOperator *o = dyn_cast<BinaryOperator>(e))
+    Visit(o, s, cs, ast);
 
   for (StmtRange child = e->children(); child; child++) {
     assert(isa<Expr>(*child) && "Non-Expr child of Expr");
     Visit(dyn_cast<Expr>(*child), s, cs, dc, ast);
   }
+}
+
+void TeslaInstrumenter::Visit(
+    BinaryOperator *o, Stmt *s, CompoundStmt *cs, ASTContext &ast) {
+
+  if (!o->isAssignmentOp()) return;
+
+  // We only care about assignments to structure fields.
+  MemberExpr *lhs = dyn_cast<MemberExpr>(o->getLHS());
+  if (lhs == NULL) return;
+
+  // Do we want to instrument this type?
+  QualType baseType = lhs->getBase()->getType();
+  if (baseType->isPointerType()) baseType = baseType->getPointeeType();
+  if (!needToInstrument(baseType)) return;
+
+  Expr *rhs = o->getRHS();
+  switch (o->getOpcode()) {
+    case BO_Assign:
+    case BO_MulAssign:
+    case BO_DivAssign:
+    case BO_RemAssign:
+    case BO_AddAssign:
+    case BO_SubAssign:
+    case BO_ShlAssign:
+    case BO_ShrAssign:
+    case BO_AndAssign:
+    case BO_XorAssign:
+    case BO_OrAssign:
+      break;
+
+    default:
+      assert(false && "isBinaryInstruction() => non-assign opcode");
+  }
+
+  AssignHook hook(lhs, rhs);
+  warnAddingInstrumentation(o->getLocStart()) << o->getSourceRange();
+  hook.insertBefore(cs, s, ast);
 }
 
 
