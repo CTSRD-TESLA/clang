@@ -214,9 +214,9 @@ void TeslaInstrumenter::Visit(
       assert(false && "isBinaryInstruction() => non-assign opcode");
   }
 
-  AssignHook hook(lhs, rhs);
+  FieldAssignment hook(lhs, rhs);
   warnAddingInstrumentation(o->getLocStart()) << o->getSourceRange();
-  hook.insertBefore(cs, s, ast);
+  hook.insert(cs, s, ast);
 }
 
 
