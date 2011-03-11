@@ -13,7 +13,7 @@
 class Instrumentation {
   public:
     /// Creates the actual instrumentation code.
-    virtual clang::Stmt* create(clang::ASTContext &ast) = 0;
+    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast) = 0;
 
     /// Inserts the instrumentation before a particular Stmt.
     void insert(clang::CompoundStmt *c, const clang::Stmt *before,
@@ -21,13 +21,51 @@ class Instrumentation {
 
     /// Inserts the instrumentation at the beginning of a CompoundStmt.
     void insert(clang::CompoundStmt *c, clang::ASTContext &ast) {
-      insert(c, *c->children(), ast);
+      if (c->children()) insert(c, *c->children(), ast);
+      else append(c, ast);
     }
 
     /// Appends the instrumentation to the end of a CompoundStmt.
     void append(clang::CompoundStmt *c, clang::ASTContext &ast);
 };
 
+
+/// Instruments entry into a function.
+class FunctionEntry : public Instrumentation {
+  public:
+    /// Constructor.
+    ///
+    /// @param  function      the function whose scope we are instrumenting
+    /// @param  teslaDataType the 'struct __tesla_data' type
+    FunctionEntry(clang::FunctionDecl *function, clang::QualType teslaDataType);
+
+    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast);
+
+  private:
+    std::string name;
+
+    clang::DeclContext *declContext;      ///< where we can declare things
+    clang::QualType teslaDataType;        ///< the type we store scoped data in
+    clang::SourceLocation location;       ///< where we pretend to exist
+};
+
+
+/// Instruments a return from a function.
+class FunctionReturn : public Instrumentation {
+  public:
+    /// Constructor.
+    ///
+    /// @param  function      the function whose scope we are instrumenting
+    FunctionReturn(clang::FunctionDecl *function);
+
+    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast);
+
+  private:
+    std::string name;
+
+    clang::DeclContext *declContext;      ///< where we can declare things
+    clang::SourceLocation location;       ///< where we pretend to exist
+};
 
 /// A value is being assigned to a structure of interest.
 class FieldAssignment : public Instrumentation {
@@ -44,7 +82,7 @@ class FieldAssignment : public Instrumentation {
 
   public:
     FieldAssignment(clang::MemberExpr *lhs, clang::Expr *rhs);
-    virtual clang::Stmt* create(clang::ASTContext &ast);
+    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast);
 };
 
 #endif // TESLA_INSTRUMENTATION_H
