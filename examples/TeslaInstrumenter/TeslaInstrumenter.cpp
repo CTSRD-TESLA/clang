@@ -24,6 +24,8 @@ private:
   Diagnostic *diag;
   unsigned int teslaWarningId;
 
+  vector<string> functionsToInstrument;
+
   bool needToInstrument(const Type* t) const {
     return (toInstrument.find(t) != toInstrument.end());
   }
@@ -32,16 +34,25 @@ private:
     return needToInstrument(t.getTypePtr());
   }
 
+  bool needToInstrument(const FunctionDecl *f) const {
+    if (f == NULL) return false;
+    return (find(functionsToInstrument.begin(), functionsToInstrument.end(),
+        f->getName()) != functionsToInstrument.end());
+  }
+
   DiagnosticBuilder warnAddingInstrumentation(SourceLocation) const;
 
 
 public:
   void Visit(DeclContext *dc, ASTContext &ast);
   void Visit(Decl *d, DeclContext *context, ASTContext &ast);
-  void Visit(CompoundStmt *cs, DeclContext* context, ASTContext &ast);
-  void Visit(Stmt *s, CompoundStmt *cs, DeclContext* context,
+  void Visit(CompoundStmt *cs, FunctionDecl *f, DeclContext* context,
       ASTContext &ast);
-  void Visit(Expr *e, Stmt *s, CompoundStmt *c,
+  void Visit(Stmt *s, FunctionDecl *f, CompoundStmt *cs, DeclContext* context,
+      ASTContext &ast);
+  void Visit(ReturnStmt *r, CompoundStmt *cs, FunctionDecl *f, DeclContext *dc,
+      ASTContext& ast);
+  void Visit(Expr *e, FunctionDecl *f, Stmt *s, CompoundStmt *c,
       DeclContext* dc, ASTContext &ast);
   void Visit(
       BinaryOperator *o, Stmt *s, CompoundStmt *cs, ASTContext &ast);
@@ -89,6 +100,13 @@ void TeslaInstrumenter::Initialize(ASTContext& ast) {
   diag = &ast.getDiagnostics();
   teslaWarningId = diag->getCustomDiagID(
       Diagnostic::Warning, "Adding TESLA instrumentation");
+
+  // TODO: un-kludge this once we have specifications to read.
+  functionsToInstrument.push_back("audit_submit");
+  functionsToInstrument.push_back("check_auth");
+  functionsToInstrument.push_back("foo");
+  functionsToInstrument.push_back("helper");
+  functionsToInstrument.push_back("syscall");
 }
 
 void TeslaInstrumenter::HandleTopLevelDecl(DeclGroupRef d) {
@@ -103,7 +121,7 @@ void TeslaInstrumenter::HandleTagDeclDefinition(TagDecl *tag) {
     toInstrument.insert(tag->getTypeForDecl());
   }
 
-  else if (tag->getName() == "tesla_data")
+  else if (tag->getName() == "__tesla_data")
     teslaDataType = tag->getTypeForDecl()->getCanonicalTypeInternal();
 }
 
@@ -119,10 +137,8 @@ void TeslaInstrumenter::Visit(DeclContext *dc, ASTContext &ast) {
 
 void TeslaInstrumenter::Visit(Decl *d, DeclContext *context, ASTContext &ast) {
   // We're not interested in function declarations, only definitions.
-  if (FunctionDecl *f = dyn_cast<FunctionDecl>(d)) {
-    if (!f->isThisDeclarationADefinition())
-      return;
-  }
+  FunctionDecl *f = dyn_cast<FunctionDecl>(d);
+  if ((f != NULL) and !f->isThisDeclarationADefinition()) return;
 
   if (DeclContext *dc = dyn_cast<DeclContext>(d)) {
     Visit(dc, ast);
@@ -131,12 +147,28 @@ void TeslaInstrumenter::Visit(Decl *d, DeclContext *context, ASTContext &ast) {
 
   if (d->hasBody()) {
     assert(isa<CompoundStmt>(d->getBody()));
-    Visit(dyn_cast<CompoundStmt>(d->getBody()), context, ast);
+    CompoundStmt *cs = dyn_cast<CompoundStmt>(d->getBody());
+
+    Visit(cs, f, context, ast);
+
+    if (needToInstrument(f)) {
+      SourceRange fRange = f->getSourceRange();
+      warnAddingInstrumentation(fRange.getBegin()) << fRange;
+
+      // Always instrument the prologue.
+      FunctionEntry(f, teslaDataType).insert(cs, ast);
+
+      // Only instrument the epilogue of void functions. If return statements
+      // keep us from getting here, this will be dead code, but it will be
+      // pruned in CG (including IR generation).
+      if (f->getResultType() == ast.VoidTy)
+        FunctionReturn(f).append(cs, ast);
+    }
   }
 }
 
 void TeslaInstrumenter::Visit(
-    CompoundStmt *cs, DeclContext* dc, ASTContext &ast) {
+    CompoundStmt *cs, FunctionDecl *f, DeclContext* dc, ASTContext &ast) {
 
   assert(cs != NULL);
 
@@ -145,30 +177,41 @@ void TeslaInstrumenter::Visit(
     // no 'else' clause), but dyn_cast() will choke on it.
     if (*child == NULL) continue;
 
-    if (Expr *e = dyn_cast<Expr>(*child)) Visit(e, e, cs, dc, ast);
-    else Visit(*child, cs, dc, ast);
+    if (Expr *e = dyn_cast<Expr>(*child)) Visit(e, f, e, cs, dc, ast);
+    else Visit(*child, f, cs, dc, ast);
   }
 }
 
 void TeslaInstrumenter::Visit(
-    Stmt *s, CompoundStmt *cs, DeclContext* dc, ASTContext &ast) {
+    Stmt *s, FunctionDecl *f, CompoundStmt *cs, DeclContext* dc,
+    ASTContext &ast) {
 
   assert(s != NULL);
 
-  if (CompoundStmt *c = dyn_cast<CompoundStmt>(s)) Visit(c, dc, ast);
+  if (CompoundStmt *c = dyn_cast<CompoundStmt>(s)) Visit(c, f, dc, ast);
+  else if (ReturnStmt *r = dyn_cast<ReturnStmt>(s)) Visit(r, cs, f, dc, ast);
   else
     for (StmtRange child = s->children(); child; child++) {
       // It's perfectly legitimate to have a null child (think an IfStmt with
       // no 'else' clause), but dyn_cast() will choke on it.
       if (*child == NULL) continue;
 
-      if (Expr *e = dyn_cast<Expr>(*child)) Visit(e, s, cs, dc, ast);
-      else Visit(*child, cs, dc, ast);
+      if (Expr *e = dyn_cast<Expr>(*child)) Visit(e, f, s, cs, dc, ast);
+      else Visit(*child, f, cs, dc, ast);
     }
 }
 
-void TeslaInstrumenter::Visit(Expr *e,
-    Stmt *s, CompoundStmt *cs, DeclContext* dc, ASTContext &ast) {
+void TeslaInstrumenter::Visit(ReturnStmt *r, CompoundStmt *cs, FunctionDecl *f,
+    DeclContext *dc, ASTContext& ast) {
+
+  if (needToInstrument(f)) {
+    warnAddingInstrumentation(r->getLocStart()) << r->getSourceRange();
+    FunctionReturn(f).insert(cs, r, ast);
+  }
+}
+
+void TeslaInstrumenter::Visit(Expr *e, FunctionDecl *f, Stmt *s,
+    CompoundStmt *cs, DeclContext* dc, ASTContext &ast) {
 
   assert(e != NULL);
 
@@ -177,7 +220,7 @@ void TeslaInstrumenter::Visit(Expr *e,
 
   for (StmtRange child = e->children(); child; child++) {
     assert(isa<Expr>(*child) && "Non-Expr child of Expr");
-    Visit(dyn_cast<Expr>(*child), s, cs, dc, ast);
+    Visit(dyn_cast<Expr>(*child), f, s, cs, dc, ast);
   }
 }
 
@@ -243,7 +286,7 @@ void TeslaInstrumenter::addTeslaDeclaration(
 
 DiagnosticBuilder
 TeslaInstrumenter::warnAddingInstrumentation(SourceLocation loc) const {
-   return diag->Report(loc, teslaWarningId);
+  return diag->Report(loc, teslaWarningId);
 }
 
 }
