@@ -61,6 +61,13 @@ void Instrumentation::append(CompoundStmt *c, ASTContext &ast) {
 }
 
 
+const string Instrumentation::PREFIX = "__tesla_event_";
+
+string Instrumentation::checkerName(const string& suffix) const {
+  return PREFIX + suffix;
+}
+
+
 FunctionEntry::FunctionEntry(FunctionDecl *function, QualType t)
   : f(function), teslaDataType(t)
 {
@@ -96,7 +103,7 @@ vector<Stmt*> FunctionEntry::create(ASTContext &ast) {
         (*i)->getSourceRange().getBegin()));
   }
 
-  statements.push_back(call("__tesla_function_prologue_" + name,
+  statements.push_back(call(checkerName("function_prologue_" + name),
         ast.VoidTy, parameters, ast));
 
   return statements;
@@ -129,7 +136,7 @@ vector<Stmt*> FunctionReturn::create(ASTContext &ast) {
     returnType = retval->getType();
   }
 
-  return vector<Stmt*>(1, call("__tesla_function_epilogue_" + name,
+  return vector<Stmt*>(1, call(checkerName("function_return_" + name),
       returnType, parameters, ast));
 }
 
@@ -160,13 +167,7 @@ vector<Stmt*> FieldAssignment::create(ASTContext &ast) {
         ast.IntTy, loc));
   arguments.push_back(cast(rhs, ast.VoidPtrTy, ast));
 
-  return vector<Stmt*>(1, call(checkerName(), ast.VoidTy, arguments, ast));
-}
-
-
-const string FieldAssignment::PREFIX = "__tesla_check_field_assign_";
-
-string FieldAssignment::checkerName() const {
+  // Get the name of the type.
   string typeName =
     QualType::getAsString(structType.getTypePtr(), Qualifiers());
 
@@ -174,9 +175,9 @@ string FieldAssignment::checkerName() const {
   size_t i;
   while ((i = typeName.find(' ')) != string::npos) typeName.replace(i, 1, "_");
 
-  return PREFIX + typeName;
+  return vector<Stmt*>(1, call(checkerName("struct_assign_" + typeName),
+        ast.VoidTy, arguments, ast));
 }
-
 
 
 Expr* cast(Expr *from, QualType to, ASTContext &ast) {
