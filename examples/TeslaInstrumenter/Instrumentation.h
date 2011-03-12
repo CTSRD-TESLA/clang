@@ -27,6 +27,12 @@ class Instrumentation {
 
     /// Appends the instrumentation to the end of a CompoundStmt.
     void append(clang::CompoundStmt *c, clang::ASTContext &ast);
+
+    /// The name of the checker function.
+    std::string checkerName(const std::string &suffix) const;
+
+  private:
+    const static std::string PREFIX;
 };
 
 
@@ -72,15 +78,10 @@ class FunctionReturn : public Instrumentation {
 /// A value is being assigned to a structure of interest.
 class FieldAssignment : public Instrumentation {
   private:
-    const static std::string PREFIX;
-
     clang::MemberExpr *lhs;
     clang::Expr *rhs;
     clang::QualType structType;
     clang::FieldDecl *field;
-
-    /// The name of the function which we will call to check this assignment.
-    std::string checkerName() const;
 
   public:
     FieldAssignment(clang::MemberExpr *lhs, clang::Expr *rhs);
