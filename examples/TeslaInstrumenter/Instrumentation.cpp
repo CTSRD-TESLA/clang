@@ -16,10 +16,6 @@ Expr* addressOf(Expr*, ASTContext&, SourceLocation loc = SourceLocation());
 FunctionDecl *declareFn(const string& name, QualType returnType,
     vector<QualType>& argTypes, ASTContext &ast);
 
-/// Call a declared function.
-Expr *call(FunctionDecl *fn, ASTContext &ast, vector<Expr*>& params,
-    SourceLocation location = SourceLocation());
-
 /// Declare and call a function.
 Expr *call(string name, QualType returnType, vector<Expr*>& params,
     ASTContext& ast, SourceLocation location = SourceLocation());
@@ -219,8 +215,15 @@ FunctionDecl *declareFn(const string& name, QualType returnType,
   return fn;
 }
 
-Expr *call(FunctionDecl *fn, ASTContext &ast, vector<Expr*>& params,
-    SourceLocation location) {
+
+Expr *call(string name, QualType returnType, vector<Expr*>& params,
+    ASTContext& ast, SourceLocation location) {
+
+  vector<QualType> argTypes;
+  for (vector<Expr*>::const_iterator i = params.begin(); i != params.end(); i++)
+    argTypes.push_back((*i)->getType());
+
+  FunctionDecl *fn = declareFn(name, returnType, argTypes, ast);
 
   Expr *fnPointer = new (ast) ImplicitCastExpr(
         ImplicitCastExpr::OnStack, ast.getPointerType(fn->getType()),
@@ -233,18 +236,4 @@ Expr *call(FunctionDecl *fn, ASTContext &ast, vector<Expr*>& params,
 
   return new (ast) CallExpr(ast, fnPointer, parameters, params.size(),
       ast.VoidTy, VK_RValue, location);
-}
-
-
-Expr *call(string name, QualType returnType, vector<Expr*>& params,
-    ASTContext& ast, SourceLocation location) {
-
-  QualType rType = returnType;
-
-  vector<QualType> argTypes;
-  for (vector<Expr*>::const_iterator i = params.begin(); i != params.end(); i++)
-    argTypes.push_back((*i)->getType());
-
-  FunctionDecl *fn = declareFn(name, rType, argTypes, ast);
-  return call(fn, ast, params, location);
 }
