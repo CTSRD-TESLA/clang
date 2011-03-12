@@ -162,7 +162,7 @@ void TeslaInstrumenter::Visit(Decl *d, DeclContext *context, ASTContext &ast) {
       // keep us from getting here, this will be dead code, but it will be
       // pruned in CG (including IR generation).
       if (f->getResultType() == ast.VoidTy)
-        FunctionReturn(f).append(cs, ast);
+        FunctionReturn(f, NULL).append(cs, ast);
     }
   }
 }
@@ -206,7 +206,7 @@ void TeslaInstrumenter::Visit(ReturnStmt *r, CompoundStmt *cs, FunctionDecl *f,
 
   if (needToInstrument(f)) {
     warnAddingInstrumentation(r->getLocStart()) << r->getSourceRange();
-    FunctionReturn(f).insert(cs, r, ast);
+    FunctionReturn(f, r->getRetValue()).insert(cs, r, ast);
   }
 }
 

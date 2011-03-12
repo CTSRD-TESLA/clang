@@ -44,7 +44,7 @@ class FunctionEntry : public Instrumentation {
   private:
     std::string name;
 
-    clang::DeclContext *declContext;      ///< where we can declare things
+    clang::FunctionDecl *f;               ///< where we can declare things
     clang::QualType teslaDataType;        ///< the type we store scoped data in
     clang::SourceLocation location;       ///< where we pretend to exist
 };
@@ -56,14 +56,16 @@ class FunctionReturn : public Instrumentation {
     /// Constructor.
     ///
     /// @param  function      the function whose scope we are instrumenting
-    FunctionReturn(clang::FunctionDecl *function);
+    /// @param  retval        the value being returned
+    FunctionReturn(clang::FunctionDecl *function, clang::Expr *retval);
 
     virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast);
 
   private:
     std::string name;
 
-    clang::DeclContext *declContext;      ///< where we can declare things
+    clang::FunctionDecl *f;               ///< where we can declare things
+    clang::Expr *retval;                  ///< return value (or NULL if void)
     clang::SourceLocation location;       ///< where we pretend to exist
 };
 

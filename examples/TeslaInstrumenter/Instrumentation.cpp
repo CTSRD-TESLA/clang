@@ -14,8 +14,15 @@ Expr* addressOf(Expr*, ASTContext&, SourceLocation loc = SourceLocation());
 
 /// Declare a function.
 FunctionDecl *declareFn(const string& name, QualType returnType,
-    const vector<QualType>& argTypes, ASTContext &ast);
+    vector<QualType>& argTypes, ASTContext &ast);
 
+/// Call a declared function.
+Expr *call(FunctionDecl *fn, ASTContext &ast, vector<Expr*>& params,
+    SourceLocation location = SourceLocation());
+
+/// Declare and call a function.
+Expr *call(string name, QualType returnType, vector<Expr*>& params,
+    ASTContext& ast, SourceLocation location = SourceLocation());
 
 
 void Instrumentation::insert(
@@ -55,14 +62,13 @@ void Instrumentation::append(CompoundStmt *c, ASTContext &ast) {
 
 
 FunctionEntry::FunctionEntry(FunctionDecl *function, QualType t)
-  : teslaDataType(t)
+  : f(function), teslaDataType(t)
 {
   assert(!t.isNull());
   assert(function->hasBody());
   assert(isa<CompoundStmt>(function->getBody()));
 
   name = function->getName();
-  declContext = function;
 
   CompoundStmt *body = dyn_cast<CompoundStmt>(function->getBody());
   location = body->getLocStart();
@@ -73,61 +79,58 @@ vector<Stmt*> FunctionEntry::create(ASTContext &ast) {
   vector<Stmt*> statements;
 
   VarDecl *data = VarDecl::Create(
-      ast, declContext, location, &dataName,
+      ast, f, location, &dataName,
       teslaDataType, ast.CreateTypeSourceInfo(teslaDataType),
       SC_None, SC_None
   );
-  declContext->addDecl(data);
+  f->addDecl(data);
 
   statements.push_back(
       new (ast) DeclStmt(DeclGroupRef(data), location, location));
 
-  FunctionDecl *fn = declareFn("__tesla_function_prologue_" + name,
-      ast.VoidTy, vector<QualType>(), ast);
 
-  Expr *fnExpr = new (ast) ImplicitCastExpr(
-        ImplicitCastExpr::OnStack, ast.getPointerType(fn->getType()),
-        CK_FunctionToPointerDecay,
-        new (ast) DeclRefExpr(fn, fn->getType(), VK_RValue, location), VK_RValue);
+  vector<Expr*> parameters;
+  for (FunctionDecl::param_iterator i = f->param_begin();
+       i != f->param_end(); i++) {
+    parameters.push_back(new (ast) DeclRefExpr(*i, (*i)->getType(), VK_RValue,
+        (*i)->getSourceRange().getBegin()));
+  }
 
-  statements.push_back(
-      new (ast) CallExpr(ast, fnExpr, NULL, 0, ast.VoidTy, VK_RValue, location));
+  statements.push_back(call("__tesla_function_prologue_" + name,
+        ast.VoidTy, parameters, ast));
 
   return statements;
 }
 
 
-FunctionReturn::FunctionReturn(FunctionDecl *function)
+FunctionReturn::FunctionReturn(FunctionDecl *function, Expr *retval)
+  : f(function), retval(retval)
 {
   assert(function->hasBody());
   assert(isa<CompoundStmt>(function->getBody()));
 
   name = function->getName();
-  declContext = function;
 
   CompoundStmt *body = dyn_cast<CompoundStmt>(function->getBody());
   location = body->getLocEnd();
 }
 
 vector<Stmt*> FunctionReturn::create(ASTContext &ast) {
+  /*
   IdentifierInfo& dataName = ast.Idents.get("__tesla_data");
-  vector<Stmt*> statements;
+  DeclContext::lookup_result result = f->lookup(DeclarationName(&dataName));
+  */
 
-  DeclContext::lookup_result result =
-    declContext->lookup(DeclarationName(&dataName));
+  QualType returnType = ast.VoidTy;
+  vector<Expr*> parameters;
 
-  FunctionDecl *fn = declareFn("__tesla_function_epilogue_" + name,
-      ast.VoidTy, vector<QualType>(), ast);
+  if (retval != NULL) {
+    parameters.push_back(retval);
+    returnType = retval->getType();
+  }
 
-  Expr *fnExpr = new (ast) ImplicitCastExpr(
-        ImplicitCastExpr::OnStack, ast.getPointerType(fn->getType()),
-        CK_FunctionToPointerDecay, 
-        new (ast) DeclRefExpr(fn, fn->getType(), VK_RValue, location), VK_RValue);
-
-  statements.push_back(
-      new (ast) CallExpr(ast, fnExpr, NULL, 0, ast.VoidTy, VK_RValue, location));
-
-  return statements;
+  return vector<Stmt*>(1, call("__tesla_function_epilogue_" + name,
+      returnType, parameters, ast));
 }
 
 
@@ -150,30 +153,14 @@ vector<Stmt*> FieldAssignment::create(ASTContext &ast) {
   Expr *base = lhs->getBase();
   if (!base->getType()->isPointerType()) base = addressOf(base, ast, loc);
 
-  // Create a function declaration within the context of the whole translation
-  // unit (this will be uniqued if necessary by the CG).
-  vector<QualType> argTypes(1, base->getType());
-  argTypes.push_back(ast.IntTy);
-  argTypes.push_back(ast.VoidPtrTy);
+  vector<Expr*> arguments;
+  arguments.push_back(base);
+  arguments.push_back(new (ast) IntegerLiteral(
+        ast, ast.MakeIntValue(field->getFieldIndex(), ast.IntTy),
+        ast.IntTy, loc));
+  arguments.push_back(cast(rhs, ast.VoidPtrTy, ast));
 
-  FunctionDecl *fn = declareFn(checkerName(), ast.VoidTy, argTypes, ast);
-
-  // Construct the expression that we will use to call said function.
-  Expr *fnExpr = new (ast) ImplicitCastExpr(
-        ImplicitCastExpr::OnStack, ast.getPointerType(fn->getType()),
-        CK_FunctionToPointerDecay,
-        new (ast) DeclRefExpr(fn, fn->getType(), VK_RValue, loc), VK_RValue);
-
-  Expr* args[3] = {
-    base,
-    new (ast) IntegerLiteral(
-        ast, ast.MakeIntValue(field->getFieldIndex(), argTypes[1]),
-        argTypes[1], loc),
-    cast(rhs, argTypes[2], ast)
-  };
-
-  return vector<Stmt*>(
-      1, new (ast) CallExpr(ast, fnExpr, args, 3, ast.VoidTy, VK_RValue, loc));
+  return vector<Stmt*>(1, call(checkerName(), ast.VoidTy, arguments, ast));
 }
 
 
@@ -213,7 +200,7 @@ Expr* addressOf(Expr *e, ASTContext &ast, SourceLocation loc) {
 }
 
 FunctionDecl *declareFn(const string& name, QualType returnType,
-    const vector<QualType>& argTypes, ASTContext &ast) {
+    vector<QualType>& argTypes, ASTContext &ast) {
 
   // The function doesn't throw exceptions, etc.
   FunctionProtoType::ExtProtoInfo extraInfo;
@@ -229,4 +216,34 @@ FunctionDecl *declareFn(const string& name, QualType returnType,
   ast.getTranslationUnitDecl()->addDecl(fn);
 
   return fn;
+}
+
+Expr *call(FunctionDecl *fn, ASTContext &ast, vector<Expr*>& params,
+    SourceLocation location) {
+
+  Expr *fnPointer = new (ast) ImplicitCastExpr(
+        ImplicitCastExpr::OnStack, ast.getPointerType(fn->getType()),
+        CK_FunctionToPointerDecay,
+        new (ast) DeclRefExpr(fn, fn->getType(), VK_RValue, location),
+        VK_RValue);
+
+  Expr** parameters = NULL;
+  if (params.size() > 0) parameters = &params[0];
+
+  return new (ast) CallExpr(ast, fnPointer, parameters, params.size(),
+      ast.VoidTy, VK_RValue, location);
+}
+
+
+Expr *call(string name, QualType returnType, vector<Expr*>& params,
+    ASTContext& ast, SourceLocation location) {
+
+  QualType rType = returnType;
+
+  vector<QualType> argTypes;
+  for (vector<Expr*>::const_iterator i = params.begin(); i != params.end(); i++)
+    argTypes.push_back((*i)->getType());
+
+  FunctionDecl *fn = declareFn(name, rType, argTypes, ast);
+  return call(fn, ast, params, location);
 }
