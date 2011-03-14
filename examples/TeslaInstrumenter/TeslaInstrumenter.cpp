@@ -140,7 +140,6 @@ void TeslaInstrumenter::HandleTagDeclDefinition(TagDecl *tag) {
 
     typedef RecordDecl::field_iterator FieldIterator;
     for (FieldIterator i = r->field_begin(); i != r->field_end(); i++) {
-      llvm::errs() << " INstrument " << typeName << "." << (*i)->getName() << "\n";
       fieldsToInstrument[typeName].push_back((*i)->getName());
     }
   }
