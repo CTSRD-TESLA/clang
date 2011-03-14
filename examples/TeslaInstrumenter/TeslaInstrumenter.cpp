@@ -176,6 +176,15 @@ void TeslaInstrumenter::Visit(Decl *d, DeclContext *context, ASTContext &ast) {
       SourceRange fRange = f->getSourceRange();
       warnAddingInstrumentation(fRange.getBegin()) << fRange;
 
+      if (teslaDataType.isNull()) {
+        int err = diag->getCustomDiagID(
+          Diagnostic::Error,
+          "Instrumenting function entry before struct __tesla_data defined");
+
+        diag->Report(err) << fRange;
+        return;
+      }
+
       // Always instrument the prologue.
       FunctionEntry(f, teslaDataType).insert(cs, ast);
 
