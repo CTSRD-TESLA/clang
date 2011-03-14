@@ -6,6 +6,8 @@
 #include "clang/Frontend/CompilerInstance.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <fstream>
+#include <map>
 #include <set>
 
 #include "Instrumentation.h"
@@ -15,35 +17,50 @@ using namespace std;
 
 namespace {
 
+typedef map<string, vector<string> > FieldMap;
+
+
 /// Instruments assignments to tag fields with TESLA assertions.
 class TeslaInstrumenter : public ASTConsumer {
 private:
   QualType teslaDataType;
-  set<const Type*> toInstrument;
 
   Diagnostic *diag;
   unsigned int teslaWarningId;
 
-  vector<string> functionsToInstrument;
+  const vector<string> typesToInstrument;
+  FieldMap fieldsToInstrument;
 
-  bool needToInstrument(const Type* t) const {
-    return (toInstrument.find(t) != toInstrument.end());
-  }
+  const vector<string> functionsToInstrument;
 
-  bool needToInstrument(const QualType t) const {
-    return needToInstrument(t.getTypePtr());
+  template<class T>
+  bool contains(const vector<T>& haystack, const T& needle) const {
+    return (find(haystack.begin(), haystack.end(), needle) != haystack.end());
   }
 
   bool needToInstrument(const FunctionDecl *f) const {
     if (f == NULL) return false;
-    return (find(functionsToInstrument.begin(), functionsToInstrument.end(),
-        f->getName()) != functionsToInstrument.end());
+    return contains<string>(functionsToInstrument, f->getName().str());
+  }
+
+  bool needToInstrument(const FieldDecl *field) const {
+    const RecordDecl *record = field->getParent();
+    string base = QualType::getAsString(record->getTypeForDecl(), Qualifiers());
+
+    FieldMap::const_iterator i = fieldsToInstrument.find(base);
+    if (i == fieldsToInstrument.end()) return false;
+
+    return contains<string>(i->second, field->getName().str());
   }
 
   DiagnosticBuilder warnAddingInstrumentation(SourceLocation) const;
 
 
 public:
+  TeslaInstrumenter(
+      FieldMap fieldsToInstrument,
+      vector<string> functionsToInstrument);
+
   void Visit(DeclContext *dc, ASTContext &ast);
   void Visit(Decl *d, DeclContext *context, ASTContext &ast);
   void Visit(CompoundStmt *cs, FunctionDecl *f, DeclContext* context,
@@ -75,18 +92,17 @@ public:
 
 
 class TeslaAction : public PluginASTAction {
-protected:
-  ASTConsumer *CreateASTConsumer(CompilerInstance &CI, llvm::StringRef) {
-    return new TeslaInstrumenter();
-  }
+  protected:
+    ASTConsumer *CreateASTConsumer(CompilerInstance &CI, llvm::StringRef) {
+      return new TeslaInstrumenter(fields, functions);
+    }
 
-  bool ParseArgs(const CompilerInstance &CI, const vector<string>& args) {
-    return true;
-  }
+    bool ParseArgs(const CompilerInstance &CI, const vector<string>& args);
+    void PrintHelp(llvm::raw_ostream& ros);
 
-  void PrintHelp(llvm::raw_ostream& ros) {
-    ros << "Help for TeslaInstrumenter plugin goes here\n";
-  }
+  private:
+    map<string, vector<string> > fields;
+    vector<string> functions;
 };
 
 static FrontendPluginRegistry::Add<TeslaAction>
@@ -96,17 +112,17 @@ X("tesla", "Add TESLA instrumentation");
 
 // ********* TeslaInstrumenter (still in the anonymous namespace). ********
 
+TeslaInstrumenter::TeslaInstrumenter(
+      map<string, vector<string> > fieldsToInstrument,
+      vector<string> functionsToInstrument)
+  : fieldsToInstrument(fieldsToInstrument),
+    functionsToInstrument(functionsToInstrument) {
+}
+
 void TeslaInstrumenter::Initialize(ASTContext& ast) {
   diag = &ast.getDiagnostics();
   teslaWarningId = diag->getCustomDiagID(
       Diagnostic::Warning, "Adding TESLA instrumentation");
-
-  // TODO: un-kludge this once we have specifications to read.
-  functionsToInstrument.push_back("audit_submit");
-  functionsToInstrument.push_back("check_auth");
-  functionsToInstrument.push_back("foo");
-  functionsToInstrument.push_back("helper");
-  functionsToInstrument.push_back("syscall");
 }
 
 void TeslaInstrumenter::HandleTopLevelDecl(DeclGroupRef d) {
@@ -118,10 +134,18 @@ void TeslaInstrumenter::HandleTopLevelDecl(DeclGroupRef d) {
 
 void TeslaInstrumenter::HandleTagDeclDefinition(TagDecl *tag) {
   if (tag->getAttr<TeslaAttr>()) {
-    toInstrument.insert(tag->getTypeForDecl());
+    assert(isa<RecordDecl>(tag) && "Can't instrument funny tags like enums");
+    RecordDecl *r = dyn_cast<RecordDecl>(tag);
+    string typeName = QualType::getAsString(r->getTypeForDecl(), Qualifiers());
+
+    typedef RecordDecl::field_iterator FieldIterator;
+    for (FieldIterator i = r->field_begin(); i != r->field_end(); i++) {
+      llvm::errs() << " INstrument " << typeName << "." << (*i)->getName() << "\n";
+      fieldsToInstrument[typeName].push_back((*i)->getName());
+    }
   }
 
-  else if (tag->getName() == "__tesla_data")
+  if (tag->getName() == "__tesla_data")
     teslaDataType = tag->getTypeForDecl()->getCanonicalTypeInternal();
 }
 
@@ -234,9 +258,8 @@ void TeslaInstrumenter::Visit(
   if (lhs == NULL) return;
 
   // Do we want to instrument this type?
-  QualType baseType = lhs->getBase()->getType();
-  if (baseType->isPointerType()) baseType = baseType->getPointeeType();
-  if (!needToInstrument(baseType)) return;
+  assert(isa<FieldDecl>(lhs->getMemberDecl()));
+  if (!needToInstrument(dyn_cast<FieldDecl>(lhs->getMemberDecl()))) return;
 
   Expr *rhs = o->getRHS();
   switch (o->getOpcode()) {
@@ -287,6 +310,70 @@ void TeslaInstrumenter::addTeslaDeclaration(
 DiagnosticBuilder
 TeslaInstrumenter::warnAddingInstrumentation(SourceLocation loc) const {
   return diag->Report(loc, teslaWarningId);
+}
+
+
+// ********* TeslaInstrumenter (still in the anonymous namespace). ********
+bool
+TeslaAction::ParseArgs(const CompilerInstance &CI, const vector<string>& args) {
+  if (args.size() != 1) {
+    PrintHelp(llvm::errs());
+    return false;
+  }
+
+  ifstream specFile(args[0].c_str());
+  if (!specFile.is_open()) {
+    llvm::errs() << "Failed to open spec file '" << args[0] << "'";
+    return false;
+  }
+
+  while (specFile.good()) {
+    string line;
+    getline(specFile, line);
+
+    vector<string> args;
+    for (size_t i = 0; i != string::npos;) {
+      size_t j = line.find(",", i);
+      args.push_back(line.substr(i, j - i));
+
+      if (j == string::npos) break;
+      i = j + 1;
+    }
+
+    if (args.size() == 0) continue;
+
+    if (args[0] == "field_assign") {
+      if (args.size() != 3) {
+        Diagnostic& diag = CI.getDiagnostics();
+        int id = diag.getCustomDiagID(
+          Diagnostic::Error,
+          "'field_assign' line in spec file should have 2 argument");
+
+        diag.Report(id);
+        return false;
+      }
+
+      fields[args[1]].push_back(args[2]);
+    } else if (args[0] == "function") {
+      if (args.size() != 2) {
+        Diagnostic& diag = CI.getDiagnostics();
+        int id = diag.getCustomDiagID(
+          Diagnostic::Error,
+          "'function' line in spec file should have 1 argument");
+
+        diag.Report(id);
+        return false;
+      }
+
+      functions.push_back(args[1]);
+    }
+  }
+
+  return true;
+}
+
+void TeslaAction::PrintHelp(llvm::raw_ostream& ros) {
+  ros << "tesla usage: -plugin tesla -plugin-arg-tesla <spec file>\n";
 }
 
 }
