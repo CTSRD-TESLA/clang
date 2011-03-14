@@ -28,8 +28,8 @@ class Instrumentation {
     /// Appends the instrumentation to the end of a CompoundStmt.
     void append(clang::CompoundStmt *c, clang::ASTContext &ast);
 
-    /// The name of the checker function.
-    std::string checkerName(const std::string &suffix) const;
+    /// The name of the event handler function.
+    std::string eventHandlerName(const std::string &suffix) const;
 
   private:
     const static std::string PREFIX;
