@@ -93,10 +93,16 @@ vector<Stmt*> FunctionEntry::create(ASTContext &ast) {
 
 
   vector<Expr*> parameters;
+  parameters.push_back(
+      addressOf(
+        new (ast) DeclRefExpr(data, data->getType(), VK_RValue, location),
+        ast, location));
+
   for (FunctionDecl::param_iterator i = f->param_begin();
        i != f->param_end(); i++) {
-    parameters.push_back(new (ast) DeclRefExpr(*i, (*i)->getType(), VK_RValue,
-        (*i)->getSourceRange().getBegin()));
+    SourceLocation loc = (*i)->getSourceRange().getBegin();
+    parameters.push_back(
+        new (ast) DeclRefExpr(*i, (*i)->getType(), VK_RValue, loc));
   }
 
   statements.push_back(call(checkerName("function_prologue_" + name),
@@ -119,13 +125,19 @@ FunctionReturn::FunctionReturn(FunctionDecl *function, Expr *retval)
 }
 
 vector<Stmt*> FunctionReturn::create(ASTContext &ast) {
-  /*
-  IdentifierInfo& dataName = ast.Idents.get("__tesla_data");
-  DeclContext::lookup_result result = f->lookup(DeclarationName(&dataName));
-  */
+  // Find the local __tesla_data.
+  DeclContextLookupResult r =
+          f->lookup(DeclarationName(&ast.Idents.get("__tesla_data")));
+
+  assert(isa<VarDecl>(*r.first));
+  VarDecl *td = dyn_cast<VarDecl>(*r.first);
 
   QualType returnType = ast.VoidTy;
   vector<Expr*> parameters;
+  parameters.push_back(
+      addressOf(
+        new (ast) DeclRefExpr(td, td->getType(), VK_RValue, SourceLocation()),
+        ast, SourceLocation()));
 
   if (retval != NULL) {
     parameters.push_back(retval);

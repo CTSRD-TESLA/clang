@@ -149,8 +149,6 @@ void TeslaInstrumenter::Visit(Decl *d, DeclContext *context, ASTContext &ast) {
     assert(isa<CompoundStmt>(d->getBody()));
     CompoundStmt *cs = dyn_cast<CompoundStmt>(d->getBody());
 
-    Visit(cs, f, context, ast);
-
     if (needToInstrument(f)) {
       SourceRange fRange = f->getSourceRange();
       warnAddingInstrumentation(fRange.getBegin()) << fRange;
@@ -164,6 +162,8 @@ void TeslaInstrumenter::Visit(Decl *d, DeclContext *context, ASTContext &ast) {
       if (f->getResultType() == ast.VoidTy)
         FunctionReturn(f, NULL).append(cs, ast);
     }
+
+    Visit(cs, f, context, ast);
   }
 }
 
