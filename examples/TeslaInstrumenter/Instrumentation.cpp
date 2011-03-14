@@ -67,7 +67,7 @@ string Instrumentation::eventHandlerName(const string& suffix) const {
 FunctionEntry::FunctionEntry(FunctionDecl *function, QualType t)
   : f(function), teslaDataType(t)
 {
-  assert(!t.isNull());
+  assert(!t.isNull() && "NULL type for 'struct __tesla_data'");
   assert(function->hasBody());
   assert(isa<CompoundStmt>(function->getBody()));
 
