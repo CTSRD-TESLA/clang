@@ -168,23 +168,24 @@ vector<Stmt*> FieldAssignment::create(ASTContext &ast) {
   Expr *base = lhs->getBase();
   if (!base->getType()->isPointerType()) base = addressOf(base, ast, loc);
 
+  // Arguments: the base and the new value being assigned.
   vector<Expr*> arguments;
   arguments.push_back(base);
-  arguments.push_back(new (ast) IntegerLiteral(
-        ast, ast.MakeIntValue(field->getFieldIndex(), ast.IntTy),
-        ast.IntTy, loc));
-  arguments.push_back(cast(rhs, ast.VoidPtrTy, ast));
+  arguments.push_back(rhs);
 
-  // Get the name of the type.
+  // The name of the event handler depends on the type and field names.
   string typeName =
     QualType::getAsString(structType.getTypePtr(), Qualifiers());
 
-  // Replace all spaces with underscores (e.g. 'struct Foo' => 'struct_Foo')
   size_t i;
   while ((i = typeName.find(' ')) != string::npos) typeName.replace(i, 1, "_");
 
-  return vector<Stmt*>(1, call(checkerName("struct_assign_" + typeName),
-        ast.VoidTy, arguments, ast));
+  string fieldName = lhs->getMemberDecl()->getName();
+
+  string name = checkerName("field_assign_" + typeName + "_" + fieldName);
+
+  // Call the event handler!
+  return vector<Stmt*>(1, call(name, ast.VoidTy, arguments, ast));
 }
 
 
