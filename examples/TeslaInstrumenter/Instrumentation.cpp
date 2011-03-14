@@ -59,7 +59,7 @@ void Instrumentation::append(CompoundStmt *c, ASTContext &ast) {
 
 const string Instrumentation::PREFIX = "__tesla_event_";
 
-string Instrumentation::checkerName(const string& suffix) const {
+string Instrumentation::eventHandlerName(const string& suffix) const {
   return PREFIX + suffix;
 }
 
@@ -105,7 +105,7 @@ vector<Stmt*> FunctionEntry::create(ASTContext &ast) {
         new (ast) DeclRefExpr(*i, (*i)->getType(), VK_RValue, loc));
   }
 
-  statements.push_back(call(checkerName("function_prologue_" + name),
+  statements.push_back(call(eventHandlerName("function_prologue_" + name),
         ast.VoidTy, parameters, ast));
 
   return statements;
@@ -144,7 +144,7 @@ vector<Stmt*> FunctionReturn::create(ASTContext &ast) {
     returnType = retval->getType();
   }
 
-  return vector<Stmt*>(1, call(checkerName("function_return_" + name),
+  return vector<Stmt*>(1, call(eventHandlerName("function_return_" + name),
       returnType, parameters, ast));
 }
 
@@ -182,7 +182,7 @@ vector<Stmt*> FieldAssignment::create(ASTContext &ast) {
 
   string fieldName = lhs->getMemberDecl()->getName();
 
-  string name = checkerName("field_assign_" + typeName + "_" + fieldName);
+  string name = eventHandlerName("field_assign_" + typeName + "_" + fieldName);
 
   // Call the event handler!
   return vector<Stmt*>(1, call(name, ast.VoidTy, arguments, ast));
