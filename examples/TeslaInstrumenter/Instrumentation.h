@@ -25,6 +25,10 @@ class Instrumentation {
       else append(c, ast);
     }
 
+    /// Replaces a number of statements with instrumentation.
+    void replace(clang::CompoundStmt *c, const clang::Stmt *s,
+        clang::ASTContext &ast, size_t len = 1);
+
     /// Appends the instrumentation to the end of a CompoundStmt.
     void append(clang::CompoundStmt *c, clang::ASTContext &ast);
 
