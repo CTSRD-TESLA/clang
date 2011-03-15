@@ -22,6 +22,44 @@ typedef map<string, vector<string> > FieldMap;
 
 /// Instruments assignments to tag fields with TESLA assertions.
 class TeslaInstrumenter : public ASTConsumer {
+public:
+  TeslaInstrumenter(
+      FieldMap fieldsToInstrument,
+      vector<string> functionsToInstrument);
+
+  // Visitors
+  void Visit(DeclContext *dc, ASTContext &ast);
+  void Visit(Decl *d, DeclContext *context, ASTContext &ast);
+  void Visit(CompoundStmt *cs, FunctionDecl *f, DeclContext* context,
+      ASTContext &ast);
+  void Visit(Stmt *s, FunctionDecl *f, CompoundStmt *cs, DeclContext* context,
+      ASTContext &ast);
+  void Visit(ReturnStmt *r, CompoundStmt *cs, FunctionDecl *f, DeclContext *dc,
+      ASTContext& ast);
+  void Visit(Expr *e, FunctionDecl *f, Stmt *s, CompoundStmt *c,
+      DeclContext* dc, ASTContext &ast);
+  void Visit(
+      BinaryOperator *o, Stmt *s, CompoundStmt *cs, ASTContext &ast);
+
+  // Make 'special' statements more amenable to instrumentation.
+  void Prepare(IfStmt *s, ASTContext &ast);
+  void Prepare(SwitchCase *s, ASTContext &ast);
+
+  /// Adds a 'struct tesla_data' declaration to a CompoundStmt.
+  void addTeslaDeclaration(
+      CompoundStmt *c, DeclContext *dc, ASTContext &ast);
+
+
+  // ASTConsumer implementation.
+
+  virtual void Initialize(ASTContext& ast);
+
+  /// Make note if a tag has been tagged with __tesla or the like.
+  virtual void HandleTagDeclDefinition(TagDecl *tag);
+
+  /// Recurse down through a declaration of a variable, function, etc.
+  virtual void HandleTopLevelDecl(DeclGroupRef d);
+
 private:
   QualType teslaDataType;
 
@@ -58,39 +96,7 @@ private:
 
   DiagnosticBuilder warnAddingInstrumentation(SourceLocation) const;
 
-
-public:
-  TeslaInstrumenter(
-      FieldMap fieldsToInstrument,
-      vector<string> functionsToInstrument);
-
-  void Visit(DeclContext *dc, ASTContext &ast);
-  void Visit(Decl *d, DeclContext *context, ASTContext &ast);
-  void Visit(CompoundStmt *cs, FunctionDecl *f, DeclContext* context,
-      ASTContext &ast);
-  void Visit(Stmt *s, FunctionDecl *f, CompoundStmt *cs, DeclContext* context,
-      ASTContext &ast);
-  void Visit(ReturnStmt *r, CompoundStmt *cs, FunctionDecl *f, DeclContext *dc,
-      ASTContext& ast);
-  void Visit(Expr *e, FunctionDecl *f, Stmt *s, CompoundStmt *c,
-      DeclContext* dc, ASTContext &ast);
-  void Visit(
-      BinaryOperator *o, Stmt *s, CompoundStmt *cs, ASTContext &ast);
-
-  /// Adds a 'struct tesla_data' declaration to a CompoundStmt.
-  void addTeslaDeclaration(
-      CompoundStmt *c, DeclContext *dc, ASTContext &ast);
-
-
-  // ASTConsumer implementation.
-
-  virtual void Initialize(ASTContext& ast);
-
-  /// Make note if a tag has been tagged with __tesla or the like.
-  virtual void HandleTagDeclDefinition(TagDecl *tag);
-
-  /// Recurse down through a declaration of a variable, function, etc.
-  virtual void HandleTopLevelDecl(DeclGroupRef d);
+  CompoundStmt* makeCompound(Stmt *s, ASTContext &ast);
 };
 
 
@@ -223,6 +229,11 @@ void TeslaInstrumenter::Visit(
 
   assert(s != NULL);
 
+  // Special cases that we need to munge a little bit.
+  if (IfStmt *i = dyn_cast<IfStmt>(s)) Prepare(i, ast);
+  else if (SwitchCase *c = dyn_cast<SwitchCase>(s)) Prepare(c, ast);
+
+  // Now visit the node or its children, as appropriate.
   if (CompoundStmt *c = dyn_cast<CompoundStmt>(s)) Visit(c, f, dc, ast);
   else if (ReturnStmt *r = dyn_cast<ReturnStmt>(s)) Visit(r, cs, f, dc, ast);
   else
@@ -234,6 +245,29 @@ void TeslaInstrumenter::Visit(
       if (Expr *e = dyn_cast<Expr>(*child)) Visit(e, f, s, cs, dc, ast);
       else Visit(*child, f, cs, dc, ast);
     }
+}
+
+void TeslaInstrumenter::Prepare(IfStmt *s, ASTContext &ast) {
+  // For now, simply replace any non-compound then and else clauses with
+  // compound versions. We can improve performance through filtering later;
+  // right now, we just want to be able to compile more code.
+  if (Stmt *t = s->getThen()) s->setThen(makeCompound(t, ast));
+  if (Stmt *e = s->getElse()) s->setElse(makeCompound(e, ast));
+}
+
+void TeslaInstrumenter::Prepare(SwitchCase *c, ASTContext &ast) {
+  Stmt *sub = c->getSubStmt();
+  if (sub == NULL) return;
+
+  // Don't wrap an existing compound statement.
+  if (isa<CompoundStmt>(sub)) return;
+
+  // Do wrap a non-compound child.
+  CompoundStmt *compound = makeCompound(sub, ast);
+  if (CaseStmt *cs = dyn_cast<CaseStmt>(c)) cs->setSubStmt(compound);
+  else if (DefaultStmt *d = dyn_cast<DefaultStmt>(c)) d->setSubStmt(compound);
+  else
+    assert(false && "SwitchCase is neither CaseStmt nor DefaultStmt");
 }
 
 void TeslaInstrumenter::Visit(ReturnStmt *r, CompoundStmt *cs, FunctionDecl *f,
@@ -325,6 +359,16 @@ void TeslaInstrumenter::addTeslaDeclaration(
 
   c->setStmts(ast, &newChildren[0], newChildren.size());
 }
+
+
+CompoundStmt* TeslaInstrumenter::makeCompound(Stmt *s, ASTContext &ast) {
+  // Don't need to nest existing compounds.
+  if (CompoundStmt *cs = dyn_cast<CompoundStmt>(s)) return cs;
+
+  SourceLocation loc = s->getLocStart();
+  return new (ast) CompoundStmt(ast, &s, 1, loc, loc);
+}
+
 
 
 DiagnosticBuilder
