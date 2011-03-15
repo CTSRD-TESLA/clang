@@ -45,6 +45,29 @@ void Instrumentation::insert(
     c->setStmts(ast, &newChildren[0], newChildren.size());
 }
 
+
+void Instrumentation::replace(CompoundStmt *c, const Stmt *s,
+    ASTContext &ast, size_t len) {
+
+  vector<Stmt*> toAdd = create(ast);
+  assert(toAdd.size() <= len);
+
+  for (size_t i = toAdd.size(); i < len; i++)
+    toAdd.push_back(new (ast) NullStmt(Stmt::EmptyShell()));
+
+  bool replacing = false;
+  size_t i = 0;
+  for (StmtRange children = c->children(); children; children++) {
+    if (*children == s) {
+      replacing = true;
+      *children = toAdd[i++];
+    } else if (replacing) {
+      if (i == len) break;
+      *children = toAdd[i++];
+    }
+  }
+}
+
 void Instrumentation::append(CompoundStmt *c, ASTContext &ast) {
 
   vector<Stmt*> newChildren;
