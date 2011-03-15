@@ -33,6 +33,9 @@ private:
 
   const vector<string> functionsToInstrument;
 
+  /// How many assertions we have already seen in a function.
+  map<FunctionDecl*, int> assertionCount;
+
   template<class T>
   bool contains(const vector<T>& haystack, const T& needle) const {
     return (find(haystack.begin(), haystack.end(), needle) != haystack.end());
@@ -247,6 +250,15 @@ void TeslaInstrumenter::Visit(Expr *e, FunctionDecl *f, Stmt *s,
 
   assert(e != NULL);
 
+  // See if we can identify the start of a Tesla assertion block.
+  TeslaAssertion tesla(e, cs, f, assertionCount[f], *diag);
+  if (tesla.isValid()) {
+    tesla.insert(cs, ast);
+    assertionCount[f]++;
+    return;
+  }
+
+  // Otherwise, proceed like normal.
   if (BinaryOperator *o = dyn_cast<BinaryOperator>(e))
     Visit(o, s, cs, ast);
 

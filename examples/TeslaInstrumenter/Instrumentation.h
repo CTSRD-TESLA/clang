@@ -36,6 +36,41 @@ class Instrumentation {
 };
 
 
+/// Instruments an assertion's point of declaration.
+class TeslaAssertion : public Instrumentation {
+  public:
+    /// Constructor.
+    ///
+    /// @param  e           the expression which might be the 'TESLA' marker
+    /// @param  cs          the CompoundStmt that e is found in
+    /// @param  f           the function the alleged assertion is made in
+    /// @param  assertCount how many assertions have already been made in f
+    /// @param  d           where to output errors and warnings
+    TeslaAssertion(clang::Expr *e, clang::CompoundStmt *cs,
+        clang::FunctionDecl *f, int assertCount, clang::Diagnostic& d);
+
+    bool isValid() const {
+      return ((parent != NULL) and (marker != NULL) and (assertion != NULL));
+    }
+
+    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast);
+
+  private:
+    /// Recursively searches for variable references.
+    void searchForVariables(clang::Stmt* s);
+
+    std::string fnName;               ///< function containing declaration
+    int assertCount;                  ///< existing assertions in function
+    clang::CompoundStmt *parent;      ///< where the assertion lives
+
+    clang::CallExpr *marker;          ///< marks the beginning of an assertion
+    clang::CompoundStmt *assertion;   ///< block of assertion "expressions"
+
+    /// varables referenced in the assertion
+    std::vector<clang::Expr*> references;
+};
+
+
 /// Instruments entry into a function.
 class FunctionEntry : public Instrumentation {
   public:

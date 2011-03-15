@@ -1,3 +1,4 @@
+#include <sstream>
 
 #include "Instrumentation.h"
 
@@ -61,6 +62,94 @@ const string Instrumentation::PREFIX = "__tesla_event_";
 
 string Instrumentation::eventHandlerName(const string& suffix) const {
   return PREFIX + suffix;
+}
+
+
+
+TeslaAssertion::TeslaAssertion(Expr *e, CompoundStmt *cs, FunctionDecl *f,
+    int assertCount, Diagnostic& diag)
+  : fnName(f->getName()), assertCount(assertCount), parent(cs),
+    marker(dyn_cast<CallExpr>(e)), assertion(NULL)
+{
+
+  // Filter out anything that isn't the magic marker we're looking for
+  // (call to __tesla_start_of_assertion()).
+  if (marker == NULL) return;
+
+  DeclRefExpr *dre =
+    dyn_cast<DeclRefExpr>(marker->getCallee()->IgnoreParenCasts());
+  if (dre == NULL) return;
+
+  if (dre->getDecl()->getName() != "__tesla_start_of_assertion") return;
+
+
+  // Find the block which immediately follows the marker.
+  bool teslaBlockComesNext = false;
+
+  for (StmtRange children = cs->children(); children; children++) {
+    if (*children == e) teslaBlockComesNext = true;
+    else if (teslaBlockComesNext) {
+      // This should be the assertion block (a CompoundStmt).
+      teslaBlockComesNext = false;
+      this->assertion = dyn_cast<CompoundStmt>(*children);
+    }
+  }
+
+  // Make sure that we did, in fact, find what we were looking for.
+  if (assertion == NULL) {
+    int id = diag.getCustomDiagID(
+      Diagnostic::Error,
+      "Expected Tesla assertion block at top level of compound statment");
+
+    diag.Report(id) << e->getSourceRange();
+    return;
+  }
+
+  searchForVariables(assertion);
+}
+
+
+void TeslaAssertion::searchForVariables(Stmt *s) {
+  // Ignore callee function names; we're only interesting in fixing variables.
+  if (CallExpr *call = dyn_cast<CallExpr>(s)) {
+    typedef CallExpr::arg_iterator ArgIterator;
+    for (ArgIterator i = call->arg_begin(); i != call->arg_end(); ++i)
+      searchForVariables(*i);
+
+  } else if (s->children()) {
+    for (StmtRange child = s->children(); child; child++) {
+      searchForVariables(*child);
+    }
+
+  } else if (DeclRefExpr *dre = dyn_cast<DeclRefExpr>(s)) {
+    references.push_back(dre);
+  }
+}
+
+
+vector<Stmt*> TeslaAssertion::create(ASTContext &ast) {
+  // Replace all Tesla stuff with a NullStmt; none of this code should actually
+  // execute at the place the assertion is declared.
+  for (StmtRange children = parent->children(); children; children++) {
+    if (*children == marker)
+      *children = new (ast) NullStmt(Stmt::EmptyShell());
+
+    else if (*children == assertion)
+      *children = new (ast) NullStmt(Stmt::EmptyShell());
+  }
+
+  // What shall we call our event handler?
+  stringstream suffix;
+  suffix << "assertion_";
+  suffix << fnName;
+  suffix << "_";
+  suffix << assertCount;
+  string handlerName = eventHandlerName(suffix.str());
+
+  vector<Stmt*> statements;
+  statements.push_back(call(handlerName, ast.VoidTy, references, ast));
+
+  return statements;
 }
 
 
