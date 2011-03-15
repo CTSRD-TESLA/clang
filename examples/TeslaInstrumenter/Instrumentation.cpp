@@ -18,7 +18,7 @@ FunctionDecl *declareFn(const string& name, QualType returnType,
     vector<QualType>& argTypes, ASTContext &ast);
 
 /// Declare and call a function.
-Expr *call(string name, QualType returnType, vector<Expr*>& params,
+Expr *call(string name, QualType returnType, const vector<Expr*>& params,
     ASTContext& ast, SourceLocation location = SourceLocation());
 
 
@@ -150,7 +150,7 @@ void TeslaAssertion::searchForVariables(Stmt *s) {
 }
 
 
-vector<Stmt*> TeslaAssertion::create(ASTContext &ast) {
+vector<Stmt*> TeslaAssertion::create(ASTContext &ast) const {
   // Replace all Tesla stuff with a NullStmt; none of this code should actually
   // execute at the place the assertion is declared.
   for (StmtRange children = parent->children(); children; children++) {
@@ -188,7 +188,7 @@ FunctionEntry::FunctionEntry(FunctionDecl *function, QualType t)
   location = body->getLocStart();
 }
 
-vector<Stmt*> FunctionEntry::create(ASTContext &ast) {
+vector<Stmt*> FunctionEntry::create(ASTContext &ast) const {
   IdentifierInfo& dataName = ast.Idents.get("__tesla_data");
   vector<Stmt*> statements;
 
@@ -235,7 +235,7 @@ FunctionReturn::FunctionReturn(FunctionDecl *function, Expr *retval)
   location = body->getLocEnd();
 }
 
-vector<Stmt*> FunctionReturn::create(ASTContext &ast) {
+vector<Stmt*> FunctionReturn::create(ASTContext &ast) const {
   // Find the local __tesla_data.
   DeclContextLookupResult r =
           f->lookup(DeclarationName(&ast.Idents.get("__tesla_data")));
@@ -271,7 +271,7 @@ FieldAssignment::FieldAssignment(MemberExpr *lhs, Expr *rhs)
 
 
 
-vector<Stmt*> FieldAssignment::create(ASTContext &ast) {
+vector<Stmt*> FieldAssignment::create(ASTContext &ast) const {
   // This is where we pretend the call was located.
   SourceLocation loc = lhs->getLocStart();
 
@@ -340,7 +340,7 @@ FunctionDecl *declareFn(const string& name, QualType returnType,
 }
 
 
-Expr *call(string name, QualType returnType, vector<Expr*>& params,
+Expr *call(string name, QualType returnType, const vector<Expr*>& params,
     ASTContext& ast, SourceLocation location) {
 
   vector<QualType> argTypes;
@@ -356,7 +356,8 @@ Expr *call(string name, QualType returnType, vector<Expr*>& params,
         VK_RValue);
 
   Expr** parameters = NULL;
-  if (params.size() > 0) parameters = &params[0];
+  // The parameters passed to CallExpr() shouldn't actually be modified.
+  if (params.size() > 0) parameters = const_cast<Expr**>(&params[0]);
 
   return new (ast) CallExpr(ast, fnPointer, parameters, params.size(),
       ast.VoidTy, VK_RValue, location);

@@ -13,7 +13,7 @@
 class Instrumentation {
   public:
     /// Creates the actual instrumentation code.
-    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast) = 0;
+    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast) const = 0;
 
     /// Inserts the instrumentation before a particular Stmt.
     void insert(clang::CompoundStmt *c, const clang::Stmt *before,
@@ -57,7 +57,7 @@ class TeslaAssertion : public Instrumentation {
       return ((parent != NULL) and (marker != NULL) and (assertion != NULL));
     }
 
-    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast);
+    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast) const;
 
   private:
     /// Recursively searches for variable references.
@@ -84,7 +84,7 @@ class FunctionEntry : public Instrumentation {
     /// @param  teslaDataType the 'struct __tesla_data' type
     FunctionEntry(clang::FunctionDecl *function, clang::QualType teslaDataType);
 
-    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast);
+    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast) const;
 
   private:
     std::string name;
@@ -104,7 +104,7 @@ class FunctionReturn : public Instrumentation {
     /// @param  retval        the value being returned
     FunctionReturn(clang::FunctionDecl *function, clang::Expr *retval);
 
-    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast);
+    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast) const;
 
   private:
     std::string name;
@@ -124,7 +124,7 @@ class FieldAssignment : public Instrumentation {
 
   public:
     FieldAssignment(clang::MemberExpr *lhs, clang::Expr *rhs);
-    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast);
+    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast) const;
 };
 
 #endif // TESLA_INSTRUMENTATION_H
