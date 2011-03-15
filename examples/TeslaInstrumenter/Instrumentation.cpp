@@ -154,11 +154,10 @@ vector<Stmt*> TeslaAssertion::create(ASTContext &ast) {
   // Replace all Tesla stuff with a NullStmt; none of this code should actually
   // execute at the place the assertion is declared.
   for (StmtRange children = parent->children(); children; children++) {
-    if (*children == marker)
+    if (*children == assertion) {
       *children = new (ast) NullStmt(Stmt::EmptyShell());
-
-    else if (*children == assertion)
-      *children = new (ast) NullStmt(Stmt::EmptyShell());
+      break;
+    }
   }
 
   // What shall we call our event handler?

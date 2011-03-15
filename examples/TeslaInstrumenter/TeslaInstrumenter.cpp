@@ -253,7 +253,7 @@ void TeslaInstrumenter::Visit(Expr *e, FunctionDecl *f, Stmt *s,
   // See if we can identify the start of a Tesla assertion block.
   TeslaAssertion tesla(e, cs, f, assertionCount[f], *diag);
   if (tesla.isValid()) {
-    tesla.insert(cs, ast);
+    tesla.replace(cs, s, ast, 2);
     assertionCount[f]++;
     return;
   }
