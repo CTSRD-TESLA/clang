@@ -62,16 +62,6 @@ public:
   virtual void HandleTopLevelDecl(DeclGroupRef d);
 
 private:
-  QualType teslaDataType;
-
-  Diagnostic *diag;
-  unsigned int teslaWarningId;
-
-  const vector<string> typesToInstrument;
-  FieldMap fieldsToInstrument;
-
-  const vector<string> functionsToInstrument;
-
   /// How many assertions we have already seen in a function.
   map<FunctionDecl*, int> assertionCount;
 
@@ -80,11 +70,13 @@ private:
     return (find(haystack.begin(), haystack.end(), needle) != haystack.end());
   }
 
+  /// Do we need to instrument this function?
   bool needToInstrument(const FunctionDecl *f) const {
     if (f == NULL) return false;
     return contains<string>(functionsToInstrument, f->getName().str());
   }
 
+  /// Do we need to instrument this field?
   bool needToInstrument(const FieldDecl *field) const {
     const RecordDecl *record = field->getParent();
     string base = QualType::getAsString(record->getTypeForDecl(), Qualifiers());
@@ -95,9 +87,23 @@ private:
     return contains<string>(i->second, field->getName().str());
   }
 
+  /// Emit a warning about inserted instrumentation.
   DiagnosticBuilder warnAddingInstrumentation(SourceLocation) const;
 
+  /// Wrap a non-compound statement in a compound statement
+  /// (if the Stmt is already a CompoundStmt, just pass through).
   CompoundStmt* makeCompound(Stmt *s, ASTContext &ast);
+
+
+  QualType teslaDataType;
+
+  Diagnostic *diag;
+  unsigned int teslaWarningId;
+
+  const vector<string> typesToInstrument;
+  FieldMap fieldsToInstrument;
+
+  const vector<string> functionsToInstrument;
 };
 
 
