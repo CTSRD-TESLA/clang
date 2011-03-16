@@ -1,4 +1,4 @@
-##===- examples/DecorateAssignments/Makefile ----------------*- Makefile -*-===##
+##===- examples/TeslaInstrumenter/Makefile ----------------*- Makefile -*-===##
 #
 #                     The LLVM Compiler Infrastructure
 #
@@ -8,15 +8,7 @@
 ##===----------------------------------------------------------------------===##
 
 CLANG_LEVEL := ../..
-LIBRARYNAME = DecorateAssignments
-
-# If we don't need RTTI or EH, there's no reason to export anything
-# from the plugin.
-ifneq ($(REQUIRES_RTTI), 1)
-ifneq ($(REQUIRES_EH), 1)
-EXPORTED_SYMBOL_FILE = $(PROJ_SRC_DIR)/DecorateAssignments.exports
-endif
-endif
+LIBRARYNAME = TeslaInstrumenter
 
 LINK_LIBS_IN_SHARED = 0
 SHARED_LIBRARY = 1
