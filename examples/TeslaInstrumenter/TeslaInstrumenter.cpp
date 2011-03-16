@@ -342,8 +342,13 @@ void TeslaInstrumenter::Visit(Expr *e, FunctionDecl *f, Stmt *s,
 
     if (Expr *expr = dyn_cast<Expr>(*child)) Visit(expr, f, s, cs, dc, ast);
     else {
-      // To have a non-Expr child of an Expr is... odd. The FreeBSD kernel
-      // does this kind of thing, though:
+      // To have a non-Expr child of an Expr is... odd.
+      int id = diag->getCustomDiagID(
+          Diagnostic::Warning, "Expression has Non-Expr child");
+
+      diag->Report(id) << e->getSourceRange();
+
+      // The FreeBSD kernel does this kind of thing, though:
 #if 0
 #define VFS_LOCK_GIANT(MP) __extension__                                \
 ({                                                                      \
@@ -358,16 +363,11 @@ void TeslaInstrumenter::Visit(Expr *e, FunctionDecl *f, Stmt *s,
         _locked;                                                        \
 })
 #endif
-      // Until we figure out a saner way to handle it, we choose to ignore
-      // such expressions.
 
-      /*
-      int id = diag->getCustomDiagID(
-          Diagnostic::Warning, "Non-Expr child of Expr");
-
-      diag->Report(id) << expr->getSourceRange();
-      Visit(s, f, cs, dc, ast);
-      */
+      // Until we figure out exactly what has been segfaulting, we
+      // choose to ignore such expressions. Hopefully we never want to
+      // instrument them.
+//      Visit(s, f, cs, dc, ast);
     }
   }
 }
