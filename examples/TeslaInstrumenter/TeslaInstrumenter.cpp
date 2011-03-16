@@ -39,7 +39,8 @@ public:
   void Visit(Expr *e, FunctionDecl *f, Stmt *s, CompoundStmt *c,
       DeclContext* dc, ASTContext &ast);
   void Visit(
-      BinaryOperator *o, Stmt *s, CompoundStmt *cs, ASTContext &ast);
+      BinaryOperator *o, Stmt *s, CompoundStmt *cs, DeclContext *dc,
+      ASTContext &ast);
 
   // Make 'special' statements more amenable to instrumentation.
   void Prepare(IfStmt *s, ASTContext &ast);
@@ -294,7 +295,7 @@ void TeslaInstrumenter::Visit(Expr *e, FunctionDecl *f, Stmt *s,
 
   // Otherwise, proceed like normal.
   if (BinaryOperator *o = dyn_cast<BinaryOperator>(e))
-    Visit(o, s, cs, ast);
+    Visit(o, s, cs, f, ast);
 
   for (StmtRange child = e->children(); child; child++) {
     if (*child == NULL) continue;
@@ -311,7 +312,8 @@ void TeslaInstrumenter::Visit(Expr *e, FunctionDecl *f, Stmt *s,
 }
 
 void TeslaInstrumenter::Visit(
-    BinaryOperator *o, Stmt *s, CompoundStmt *cs, ASTContext &ast) {
+    BinaryOperator *o, Stmt *s, CompoundStmt *cs, DeclContext *dc,
+    ASTContext &ast) {
 
   if (!o->isAssignmentOp()) return;
 
@@ -342,7 +344,7 @@ void TeslaInstrumenter::Visit(
       assert(false && "isBinaryInstruction() => non-assign opcode");
   }
 
-  FieldAssignment hook(lhs, rhs);
+  FieldAssignment hook(lhs, rhs, dc);
   warnAddingInstrumentation(o->getLocStart()) << o->getSourceRange();
   hook.insert(cs, s, ast);
 }
