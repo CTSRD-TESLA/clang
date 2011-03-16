@@ -297,6 +297,8 @@ void TeslaInstrumenter::Visit(Expr *e, FunctionDecl *f, Stmt *s,
     Visit(o, s, cs, ast);
 
   for (StmtRange child = e->children(); child; child++) {
+    if (*child == NULL) continue;
+
     if (Expr *expr = dyn_cast<Expr>(*child)) Visit(expr, f, s, cs, dc, ast);
     else {
       int id = diag->getCustomDiagID(
