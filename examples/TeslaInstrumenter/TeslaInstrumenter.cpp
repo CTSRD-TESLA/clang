@@ -148,6 +148,7 @@ TeslaInstrumenter::TeslaInstrumenter(StringRef filename,
 
 void TeslaInstrumenter::Initialize(ASTContext& ast) {
   diag = &ast.getDiagnostics();
+  teslaDataType = ast.VoidPtrTy;
   teslaWarningId = diag->getCustomDiagID(
       Diagnostic::Warning, "Adding TESLA instrumentation");
 }
@@ -170,9 +171,6 @@ void TeslaInstrumenter::HandleTagDeclDefinition(TagDecl *tag) {
       fieldsToInstrument[typeName].push_back((*i)->getName());
     }
   }
-
-  if (tag->getName() == "__tesla_data")
-    teslaDataType = tag->getTypeForDecl()->getCanonicalTypeInternal();
 }
 
 void TeslaInstrumenter::HandleTranslationUnit(ASTContext &ast) {
@@ -224,15 +222,6 @@ void TeslaInstrumenter::Visit(Decl *d, DeclContext *context, ASTContext &ast) {
     if (needToInstrument(f)) {
       SourceRange fRange = f->getSourceRange();
       warnAddingInstrumentation(fRange.getBegin()) << fRange;
-
-      if (teslaDataType.isNull()) {
-        int err = diag->getCustomDiagID(
-          Diagnostic::Error,
-          "Instrumenting function entry before struct __tesla_data defined");
-
-        diag->Report(err) << fRange;
-        return;
-      }
 
       // Always instrument the prologue.
       store(FunctionEntry(f, teslaDataType).insert(cs, ast));
