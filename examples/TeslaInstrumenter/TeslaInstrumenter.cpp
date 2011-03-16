@@ -342,11 +342,32 @@ void TeslaInstrumenter::Visit(Expr *e, FunctionDecl *f, Stmt *s,
 
     if (Expr *expr = dyn_cast<Expr>(*child)) Visit(expr, f, s, cs, dc, ast);
     else {
+      // To have a non-Expr child of an Expr is... odd. The FreeBSD kernel
+      // does this kind of thing, though:
+#if 0
+#define VFS_LOCK_GIANT(MP) __extension__                                \
+({                                                                      \
+        int _locked;                                                    \
+        struct mount *_mp;                                              \
+        _mp = (MP);                                                     \
+        if (VFS_NEEDSGIANT_(_mp)) {                                     \
+                mtx_lock(&Giant);                                       \
+                _locked = 1;                                            \
+        } else                                                          \
+                _locked = 0;                                            \
+        _locked;                                                        \
+})
+#endif
+      // Until we figure out a saner way to handle it, we choose to ignore
+      // such expressions.
+
+      /*
       int id = diag->getCustomDiagID(
           Diagnostic::Warning, "Non-Expr child of Expr");
 
       diag->Report(id) << expr->getSourceRange();
       Visit(s, f, cs, dc, ast);
+      */
     }
   }
 }
