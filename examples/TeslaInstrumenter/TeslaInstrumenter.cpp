@@ -15,6 +15,8 @@
 using namespace clang;
 using namespace std;
 
+using llvm::StringRef;
+
 namespace {
 
 typedef map<string, vector<string> > FieldMap;
@@ -23,7 +25,7 @@ typedef map<string, vector<string> > FieldMap;
 /// Instruments assignments to tag fields with TESLA assertions.
 class TeslaInstrumenter : public ASTConsumer {
 public:
-  TeslaInstrumenter(
+  TeslaInstrumenter(StringRef filename,
       FieldMap fieldsToInstrument,
       vector<string> functionsToInstrument);
 
@@ -61,7 +63,13 @@ public:
   /// Recurse down through a declaration of a variable, function, etc.
   virtual void HandleTopLevelDecl(DeclGroupRef d);
 
+  /// We've finished processing an entire translation unit.
+  virtual void HandleTranslationUnit(ASTContext &ast);
+
 private:
+  /// The file that we're instrumenting.
+  StringRef filename;
+
   /// How many assertions we have already seen in a function.
   map<FunctionDecl*, int> assertionCount;
 
@@ -69,6 +77,9 @@ private:
   bool contains(const vector<T>& haystack, const T& needle) const {
     return (find(haystack.begin(), haystack.end(), needle) != haystack.end());
   }
+
+  /// Remember that we've added some instrumentation.
+  void store(vector<Stmt*> instrumentation);
 
   /// Do we need to instrument this function?
   bool needToInstrument(const FunctionDecl *f) const {
@@ -104,14 +115,14 @@ private:
   FieldMap fieldsToInstrument;
 
   const vector<string> functionsToInstrument;
+
+  vector<Stmt*> instrumentation;
 };
 
 
 class TeslaAction : public PluginASTAction {
   protected:
-    ASTConsumer *CreateASTConsumer(CompilerInstance &CI, llvm::StringRef) {
-      return new TeslaInstrumenter(fields, functions);
-    }
+    ASTConsumer *CreateASTConsumer(CompilerInstance &CI, StringRef filename);
 
     bool ParseArgs(const CompilerInstance &CI, const vector<string>& args);
     void PrintHelp(llvm::raw_ostream& ros);
@@ -128,10 +139,10 @@ X("tesla", "Add TESLA instrumentation");
 
 // ********* TeslaInstrumenter (still in the anonymous namespace). ********
 
-TeslaInstrumenter::TeslaInstrumenter(
-      map<string, vector<string> > fieldsToInstrument,
+TeslaInstrumenter::TeslaInstrumenter(StringRef filename,
+      FieldMap fieldsToInstrument,
       vector<string> functionsToInstrument)
-  : fieldsToInstrument(fieldsToInstrument),
+  : filename(filename), fieldsToInstrument(fieldsToInstrument),
     functionsToInstrument(functionsToInstrument) {
 }
 
@@ -162,6 +173,28 @@ void TeslaInstrumenter::HandleTagDeclDefinition(TagDecl *tag) {
 
   if (tag->getName() == "__tesla_data")
     teslaDataType = tag->getTypeForDecl()->getCanonicalTypeInternal();
+}
+
+void TeslaInstrumenter::HandleTranslationUnit(ASTContext &ast) {
+  string headerFileName = ("__tesla_instrumentation_" + filename + ".h").str();
+  ofstream output(headerFileName.c_str());
+
+  // Print out a header file for instrumentation event handlers.
+  for (vector<Stmt*>::iterator i = instrumentation.begin();
+       i != instrumentation.end(); i++)
+    if (CallExpr *call = dyn_cast<CallExpr>(*i)) {
+
+      output
+        << call->getType().getAsString() << " "
+        << call->getDirectCallee()->getName().str() << "(";
+
+      for (size_t i = 0; i < call->getNumArgs();) {
+        output << call->getArg(i)->getType().getAsString();
+        if (++i != call->getNumArgs()) output << ", ";
+      }
+
+      output << ");\n";
+    }
 }
 
 
@@ -202,7 +235,7 @@ void TeslaInstrumenter::Visit(Decl *d, DeclContext *context, ASTContext &ast) {
       }
 
       // Always instrument the prologue.
-      FunctionEntry(f, teslaDataType).insert(cs, ast);
+      store(FunctionEntry(f, teslaDataType).insert(cs, ast));
 
       // Only instrument the epilogue of void functions. If return statements
       // keep us from getting here, this will be dead code, but it will be
@@ -282,7 +315,7 @@ void TeslaInstrumenter::Visit(ReturnStmt *r, CompoundStmt *cs, FunctionDecl *f,
 
   if (needToInstrument(f)) {
     warnAddingInstrumentation(r->getLocStart()) << r->getSourceRange();
-    FunctionReturn(f, r).insert(cs, r, ast);
+    store(FunctionReturn(f, r).insert(cs, r, ast));
   }
 }
 
@@ -294,7 +327,7 @@ void TeslaInstrumenter::Visit(Expr *e, FunctionDecl *f, Stmt *s,
   // See if we can identify the start of a Tesla assertion block.
   TeslaAssertion tesla(e, cs, f, assertionCount[f], *diag);
   if (tesla.isValid()) {
-    tesla.replace(cs, s, ast, 2);
+    store(tesla.replace(cs, s, ast, 2));
     assertionCount[f]++;
     return;
   }
@@ -352,7 +385,7 @@ void TeslaInstrumenter::Visit(
 
   FieldAssignment hook(lhs, rhs, dc);
   warnAddingInstrumentation(o->getLocStart()) << o->getSourceRange();
-  hook.insert(cs, s, ast);
+  store(hook.insert(cs, s, ast));
 }
 
 
@@ -377,6 +410,12 @@ void TeslaInstrumenter::addTeslaDeclaration(
 }
 
 
+void TeslaInstrumenter::store(vector<Stmt*> inst) {
+  for (vector<Stmt*>::iterator i = inst.begin(); i != inst.end(); i++)
+    instrumentation.push_back(*i);
+}
+
+
 CompoundStmt* TeslaInstrumenter::makeCompound(Stmt *s, ASTContext &ast) {
   // Don't need to nest existing compounds.
   if (CompoundStmt *cs = dyn_cast<CompoundStmt>(s)) return cs;
@@ -393,7 +432,13 @@ TeslaInstrumenter::warnAddingInstrumentation(SourceLocation loc) const {
 }
 
 
-// ********* TeslaInstrumenter (still in the anonymous namespace). ********
+// ********* TeslaAction (still in the anonymous namespace). ********
+
+ASTConsumer* TeslaAction::CreateASTConsumer(CompilerInstance &CI,
+    StringRef filename) {
+  return new TeslaInstrumenter(filename, fields, functions);
+}
+
 bool
 TeslaAction::ParseArgs(const CompilerInstance &CI, const vector<string>& args) {
   if (args.size() != 1) {

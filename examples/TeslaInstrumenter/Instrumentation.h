@@ -16,21 +16,24 @@ class Instrumentation {
     virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast) = 0;
 
     /// Inserts the instrumentation before a particular Stmt.
-    void insert(clang::CompoundStmt *c, const clang::Stmt *before,
+    std::vector<clang::Stmt*> insert(
+        clang::CompoundStmt *c, const clang::Stmt *before,
         clang::ASTContext &ast);
 
     /// Inserts the instrumentation at the beginning of a CompoundStmt.
-    void insert(clang::CompoundStmt *c, clang::ASTContext &ast) {
-      if (c->children()) insert(c, *c->children(), ast);
-      else append(c, ast);
+    std::vector<clang::Stmt*> insert(
+        clang::CompoundStmt *c, clang::ASTContext &ast) {
+      if (c->children()) return insert(c, *c->children(), ast);
+      else return append(c, ast);
     }
 
     /// Replaces a number of statements with instrumentation.
-    void replace(clang::CompoundStmt *c, clang::Stmt *s,
+    std::vector<clang::Stmt*> replace(clang::CompoundStmt *c, clang::Stmt *s,
         clang::ASTContext &ast, size_t len = 1);
 
     /// Appends the instrumentation to the end of a CompoundStmt.
-    void append(clang::CompoundStmt *c, clang::ASTContext &ast);
+    std::vector<clang::Stmt*> append(
+        clang::CompoundStmt *c, clang::ASTContext &ast);
 
     /// The name of the event handler function.
     std::string eventHandlerName(const std::string &suffix) const;
