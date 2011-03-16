@@ -176,7 +176,7 @@ void TeslaInstrumenter::HandleTagDeclDefinition(TagDecl *tag) {
 }
 
 void TeslaInstrumenter::HandleTranslationUnit(ASTContext &ast) {
-  string headerFileName = ("__tesla_instrumentation_" + filename + ".h").str();
+  string headerFileName = (filename + "-tesla.h").str();
   ofstream output(headerFileName.c_str());
 
   // Print out a header file for instrumentation event handlers.
