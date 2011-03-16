@@ -22,7 +22,7 @@ Expr *call(string name, QualType returnType, vector<Expr*>& params,
     ASTContext& ast, SourceLocation location = SourceLocation());
 
 
-void Instrumentation::insert(
+vector<Stmt*> Instrumentation::insert(
     CompoundStmt *c, const Stmt *before, ASTContext &ast) {
 
   vector<Stmt*> newChildren;
@@ -43,10 +43,12 @@ void Instrumentation::insert(
 
   if (newChildren.size() > 0)
     c->setStmts(ast, &newChildren[0], newChildren.size());
+
+  return toAdd;
 }
 
 
-void Instrumentation::replace(CompoundStmt *c, Stmt *s,
+vector<Stmt*> Instrumentation::replace(CompoundStmt *c, Stmt *s,
     ASTContext &ast, size_t len) {
 
   vector<Stmt*> toAdd = create(ast);
@@ -66,9 +68,11 @@ void Instrumentation::replace(CompoundStmt *c, Stmt *s,
       *children = toAdd[i++];
     }
   }
+
+  return toAdd;
 }
 
-void Instrumentation::append(CompoundStmt *c, ASTContext &ast) {
+vector<Stmt*> Instrumentation::append(CompoundStmt *c, ASTContext &ast) {
 
   vector<Stmt*> newChildren;
   vector<Stmt*> toAdd = create(ast);
@@ -78,6 +82,8 @@ void Instrumentation::append(CompoundStmt *c, ASTContext &ast) {
     newChildren.push_back(*i);
 
   c->setStmts(ast, &newChildren[0], newChildren.size());
+
+  return toAdd;
 }
 
 
