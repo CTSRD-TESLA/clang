@@ -241,6 +241,7 @@ void TeslaInstrumenter::Visit(Decl *d, DeclContext *context, ASTContext &ast) {
       // keep us from getting here, this will be dead code, but it will be
       // pruned in CG (including IR generation).
       if (f->getResultType() == ast.VoidTy)
+        warnAddingInstrumentation(f->getLocEnd()) << f->getSourceRange();
         FunctionReturn(f, NULL).append(cs, ast);
     }
 
