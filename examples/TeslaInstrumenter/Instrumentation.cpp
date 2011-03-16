@@ -151,15 +151,6 @@ void TeslaAssertion::searchForVariables(Stmt *s) {
 
 
 vector<Stmt*> TeslaAssertion::create(ASTContext &ast) const {
-  // Replace all Tesla stuff with a NullStmt; none of this code should actually
-  // execute at the place the assertion is declared.
-  for (StmtRange children = parent->children(); children; children++) {
-    if (*children == assertion) {
-      *children = new (ast) NullStmt(Stmt::EmptyShell());
-      break;
-    }
-  }
-
   // What shall we call our event handler?
   stringstream suffix;
   suffix << "assertion_";
