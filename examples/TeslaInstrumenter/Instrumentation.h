@@ -140,15 +140,18 @@ class FunctionReturn : public Instrumentation {
 
 /// A value is being assigned to a structure of interest.
 class FieldAssignment : public Instrumentation {
+  public:
+    FieldAssignment(clang::MemberExpr *lhs, clang::Expr *rhs,
+        clang::DeclContext *dc);
+
+    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast);
+
   private:
     clang::MemberExpr *lhs;
     clang::Expr *rhs;
     clang::QualType structType;
     clang::FieldDecl *field;
-
-  public:
-    FieldAssignment(clang::MemberExpr *lhs, clang::Expr *rhs);
-    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast);
+    clang::DeclContext *dc;
 };
 
 #endif // TESLA_INSTRUMENTATION_H

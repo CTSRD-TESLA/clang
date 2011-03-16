@@ -311,8 +311,8 @@ vector<Stmt*> FunctionReturn::create(ASTContext &ast) {
 }
 
 
-FieldAssignment::FieldAssignment(MemberExpr *lhs, Expr *rhs)
-    : lhs(lhs), rhs(rhs) {
+FieldAssignment::FieldAssignment(MemberExpr *lhs, Expr *rhs, DeclContext *dc)
+    : lhs(lhs), rhs(rhs), dc(dc) {
   assert(isa<FieldDecl>(lhs->getMemberDecl()));
   this->field = dyn_cast<FieldDecl>(lhs->getMemberDecl());
 
@@ -323,8 +323,16 @@ FieldAssignment::FieldAssignment(MemberExpr *lhs, Expr *rhs)
 
 
 vector<Stmt*> FieldAssignment::create(ASTContext &ast) {
+  vector<Stmt*> statements;
+
   // This is where we pretend the call was located.
   SourceLocation loc = lhs->getLocStart();
+
+  // Ensure that we don't double-evaluate rhs.
+  pair<Expr*, vector<Stmt*> > lvalue = makeLValue(rhs, "assign", dc, ast);
+  vector<Stmt*>& init = lvalue.second;
+  for (vector<Stmt*>::iterator i = init.begin(); i != init.end(); i++)
+    statements.push_back(*i);
 
   // Get a pointer to the struct.
   Expr *base = lhs->getBase();
@@ -333,7 +341,7 @@ vector<Stmt*> FieldAssignment::create(ASTContext &ast) {
   // Arguments: the base and the new value being assigned.
   vector<Expr*> arguments;
   arguments.push_back(base);
-  arguments.push_back(rhs);
+  arguments.push_back(lvalue.first);
 
   // The name of the event handler depends on the type and field names.
   string typeName = typeIdentifier(structType.getTypePtr());
@@ -342,7 +350,8 @@ vector<Stmt*> FieldAssignment::create(ASTContext &ast) {
   string name = eventHandlerName("field_assign_" + typeName + "_" + fieldName);
 
   // Call the event handler!
-  return vector<Stmt*>(1, call(name, ast.VoidTy, arguments, ast));
+  statements.push_back(call(name, ast.VoidTy, arguments, ast));
+  return statements;
 }
 
 
