@@ -18,7 +18,7 @@ FunctionDecl *declareFn(const string& name, QualType returnType,
     vector<QualType>& argTypes, ASTContext &ast);
 
 /// Declare and call a function.
-Expr *call(string name, QualType returnType, const vector<Expr*>& params,
+Expr *call(string name, QualType returnType, vector<Expr*>& params,
     ASTContext& ast, SourceLocation location = SourceLocation());
 
 
@@ -46,7 +46,7 @@ void Instrumentation::insert(
 }
 
 
-void Instrumentation::replace(CompoundStmt *c, const Stmt *s,
+void Instrumentation::replace(CompoundStmt *c, Stmt *s,
     ASTContext &ast, size_t len) {
 
   vector<Stmt*> toAdd = create(ast);
@@ -78,6 +78,52 @@ void Instrumentation::append(CompoundStmt *c, ASTContext &ast) {
     newChildren.push_back(*i);
 
   c->setStmts(ast, &newChildren[0], newChildren.size());
+}
+
+
+pair<Expr*, vector<Stmt*> > Instrumentation::makeLValue(
+    Expr *e, const string& name, DeclContext *dc, ASTContext &ast,
+    SourceLocation location) {
+
+  pair<Expr*, vector<Stmt*> > result;
+  if (e->isLValue()) return result;
+
+  // Create a temporary variable to store the result of 'e'.
+  QualType t = e->getType();
+  IdentifierInfo& id = ast.Idents.get("__tesla_tmp_" + name);
+
+  VarDecl *decl = VarDecl::Create(
+      ast, dc, location, &id, t, ast.CreateTypeSourceInfo(t),
+      SC_None, SC_None);
+
+  // Create a reference to this stored variable.
+  result.first = new (ast) DeclRefExpr(decl, t, VK_LValue, location);
+
+  // Declare the variable.
+  dc->addDecl(decl);
+  result.second.push_back(
+      new (ast) DeclStmt(DeclGroupRef(decl), location, location));
+
+  // Assign to the variable.
+  result.second.push_back(
+      new (ast) BinaryOperator(
+        result.first, e, BO_Assign, t, VK_LValue, OK_Ordinary, location));
+
+  return result;
+}
+
+
+string Instrumentation::typeIdentifier(const QualType t) const {
+  string name = t.getAsString();
+
+  size_t i;
+  while ((i = name.find(' ')) != string::npos) name.replace(i, 1, "_");
+
+  return name;
+}
+
+string Instrumentation::typeIdentifier(const Type *t) const {
+  return typeIdentifier(QualType(t, Qualifiers()));
 }
 
 
@@ -150,7 +196,7 @@ void TeslaAssertion::searchForVariables(Stmt *s) {
 }
 
 
-vector<Stmt*> TeslaAssertion::create(ASTContext &ast) const {
+vector<Stmt*> TeslaAssertion::create(ASTContext &ast) {
   // What shall we call our event handler?
   stringstream suffix;
   suffix << "assertion_";
@@ -179,7 +225,7 @@ FunctionEntry::FunctionEntry(FunctionDecl *function, QualType t)
   location = body->getLocStart();
 }
 
-vector<Stmt*> FunctionEntry::create(ASTContext &ast) const {
+vector<Stmt*> FunctionEntry::create(ASTContext &ast) {
   IdentifierInfo& dataName = ast.Idents.get("__tesla_data");
   vector<Stmt*> statements;
 
@@ -214,8 +260,8 @@ vector<Stmt*> FunctionEntry::create(ASTContext &ast) const {
 }
 
 
-FunctionReturn::FunctionReturn(FunctionDecl *function, Expr *retval)
-  : f(function), retval(retval)
+FunctionReturn::FunctionReturn(FunctionDecl *function, ReturnStmt *r)
+  : f(function), r(r)
 {
   assert(function->hasBody());
   assert(isa<CompoundStmt>(function->getBody()));
@@ -226,13 +272,13 @@ FunctionReturn::FunctionReturn(FunctionDecl *function, Expr *retval)
   location = body->getLocEnd();
 }
 
-vector<Stmt*> FunctionReturn::create(ASTContext &ast) const {
+vector<Stmt*> FunctionReturn::create(ASTContext &ast) {
   // Find the local __tesla_data.
-  DeclContextLookupResult r =
+  DeclContextLookupResult lookupResult =
           f->lookup(DeclarationName(&ast.Idents.get("__tesla_data")));
 
-  assert(isa<VarDecl>(*r.first));
-  VarDecl *td = dyn_cast<VarDecl>(*r.first);
+  assert(isa<VarDecl>(*lookupResult.first));
+  VarDecl *td = dyn_cast<VarDecl>(*lookupResult.first);
 
   QualType returnType = ast.VoidTy;
   vector<Expr*> parameters;
@@ -241,13 +287,27 @@ vector<Stmt*> FunctionReturn::create(ASTContext &ast) const {
         new (ast) DeclRefExpr(td, td->getType(), VK_RValue, SourceLocation()),
         ast, SourceLocation()));
 
-  if (retval != NULL) {
-    parameters.push_back(retval);
+  vector<Stmt*> statements;
+  if ((r != NULL) and (r->getRetValue() != NULL)) {
+    Expr *retval = r->getRetValue();
     returnType = retval->getType();
+
+    pair<Expr*, vector<Stmt*> > lvalue = makeLValue(retval, "retval", f, ast);
+    Expr *retLValue = lvalue.first;
+    vector<Stmt*>& toAdd = lvalue.second;
+
+    parameters.push_back(retLValue);
+    r->setRetValue(retLValue);
+
+    for (vector<Stmt*>::iterator i = toAdd.begin(); i != toAdd.end(); i++)
+      statements.push_back(*i);
   }
 
-  return vector<Stmt*>(1, call(eventHandlerName("function_return_" + name),
-      returnType, parameters, ast));
+  statements.push_back(
+      call(eventHandlerName("function_return_" + name), returnType,
+           parameters, ast));
+
+  return statements;
 }
 
 
@@ -262,7 +322,7 @@ FieldAssignment::FieldAssignment(MemberExpr *lhs, Expr *rhs)
 
 
 
-vector<Stmt*> FieldAssignment::create(ASTContext &ast) const {
+vector<Stmt*> FieldAssignment::create(ASTContext &ast) {
   // This is where we pretend the call was located.
   SourceLocation loc = lhs->getLocStart();
 
@@ -276,12 +336,7 @@ vector<Stmt*> FieldAssignment::create(ASTContext &ast) const {
   arguments.push_back(rhs);
 
   // The name of the event handler depends on the type and field names.
-  string typeName =
-    QualType::getAsString(structType.getTypePtr(), Qualifiers());
-
-  size_t i;
-  while ((i = typeName.find(' ')) != string::npos) typeName.replace(i, 1, "_");
-
+  string typeName = typeIdentifier(structType.getTypePtr());
   string fieldName = lhs->getMemberDecl()->getName();
 
   string name = eventHandlerName("field_assign_" + typeName + "_" + fieldName);
@@ -331,7 +386,7 @@ FunctionDecl *declareFn(const string& name, QualType returnType,
 }
 
 
-Expr *call(string name, QualType returnType, const vector<Expr*>& params,
+Expr *call(string name, QualType returnType, vector<Expr*>& params,
     ASTContext& ast, SourceLocation location) {
 
   vector<QualType> argTypes;
@@ -347,8 +402,7 @@ Expr *call(string name, QualType returnType, const vector<Expr*>& params,
         VK_RValue);
 
   Expr** parameters = NULL;
-  // The parameters passed to CallExpr() shouldn't actually be modified.
-  if (params.size() > 0) parameters = const_cast<Expr**>(&params[0]);
+  if (params.size() > 0) parameters = &params[0];
 
   return new (ast) CallExpr(ast, fnPointer, parameters, params.size(),
       ast.VoidTy, VK_RValue, location);

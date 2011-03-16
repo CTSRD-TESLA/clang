@@ -275,7 +275,7 @@ void TeslaInstrumenter::Visit(ReturnStmt *r, CompoundStmt *cs, FunctionDecl *f,
 
   if (needToInstrument(f)) {
     warnAddingInstrumentation(r->getLocStart()) << r->getSourceRange();
-    FunctionReturn(f, r->getRetValue()).insert(cs, r, ast);
+    FunctionReturn(f, r).insert(cs, r, ast);
   }
 }
 
