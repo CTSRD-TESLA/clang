@@ -13,7 +13,7 @@
 class Instrumentation {
   public:
     /// Creates the actual instrumentation code.
-    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast) const = 0;
+    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast) = 0;
 
     /// Inserts the instrumentation before a particular Stmt.
     void insert(clang::CompoundStmt *c, const clang::Stmt *before,
@@ -26,7 +26,7 @@ class Instrumentation {
     }
 
     /// Replaces a number of statements with instrumentation.
-    void replace(clang::CompoundStmt *c, const clang::Stmt *s,
+    void replace(clang::CompoundStmt *c, clang::Stmt *s,
         clang::ASTContext &ast, size_t len = 1);
 
     /// Appends the instrumentation to the end of a CompoundStmt.
@@ -34,6 +34,30 @@ class Instrumentation {
 
     /// The name of the event handler function.
     std::string eventHandlerName(const std::string &suffix) const;
+
+  protected:
+  /// Turn an expression into an L-Value.
+  ///
+  /// When we call instrumentation, we don't want to evaluate expressions
+  /// twice (e.g. 'return foo();' -> '__instrument(foo()); return foo();').
+  /// Instead, we should create a temporary variable and assign it just before
+  /// we would normally take the instrumentated action:
+  ///
+  /// T *tmp;
+  /// ...
+  /// tmp = foo();
+  /// __instrument(tmp);
+  /// return tmp;
+  ///
+  /// @returns a pair containing 1) an expression which references the temporary
+  ///          variable, and 2) the statement which initializes it
+  std::pair<clang::Expr*, std::vector<clang::Stmt*> > makeLValue(
+      clang::Expr *e, const std::string& name,
+      clang::DeclContext *dc, clang::ASTContext &ast,
+      clang::SourceLocation location = clang::SourceLocation());
+
+  std::string typeIdentifier(const clang::QualType t) const;
+  std::string typeIdentifier(const clang::Type *t) const;
 
   private:
     const static std::string PREFIX;
@@ -57,7 +81,7 @@ class TeslaAssertion : public Instrumentation {
       return ((parent != NULL) and (marker != NULL) and (assertion != NULL));
     }
 
-    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast) const;
+    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast);
 
   private:
     /// Recursively searches for variable references.
@@ -84,7 +108,7 @@ class FunctionEntry : public Instrumentation {
     /// @param  teslaDataType the 'struct __tesla_data' type
     FunctionEntry(clang::FunctionDecl *function, clang::QualType teslaDataType);
 
-    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast) const;
+    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast);
 
   private:
     std::string name;
@@ -101,16 +125,16 @@ class FunctionReturn : public Instrumentation {
     /// Constructor.
     ///
     /// @param  function      the function whose scope we are instrumenting
-    /// @param  retval        the value being returned
-    FunctionReturn(clang::FunctionDecl *function, clang::Expr *retval);
+    /// @param  r             the return statement
+    FunctionReturn(clang::FunctionDecl *function, clang::ReturnStmt *r);
 
-    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast) const;
+    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast);
 
   private:
     std::string name;
 
     clang::FunctionDecl *f;               ///< where we can declare things
-    clang::Expr *retval;                  ///< return value (or NULL if void)
+    clang::ReturnStmt *r;                 ///< to instrument (NULL if void)
     clang::SourceLocation location;       ///< where we pretend to exist
 };
 
@@ -124,7 +148,7 @@ class FieldAssignment : public Instrumentation {
 
   public:
     FieldAssignment(clang::MemberExpr *lhs, clang::Expr *rhs);
-    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast) const;
+    virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast);
 };
 
 #endif // TESLA_INSTRUMENTATION_H
