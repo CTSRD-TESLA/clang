@@ -297,8 +297,14 @@ void TeslaInstrumenter::Visit(Expr *e, FunctionDecl *f, Stmt *s,
     Visit(o, s, cs, ast);
 
   for (StmtRange child = e->children(); child; child++) {
-    assert(isa<Expr>(*child) && "Non-Expr child of Expr");
-    Visit(dyn_cast<Expr>(*child), f, s, cs, dc, ast);
+    if (Expr *expr = dyn_cast<Expr>(*child)) Visit(expr, f, s, cs, dc, ast);
+    else {
+      int id = diag->getCustomDiagID(
+          Diagnostic::Warning, "Non-Expr child of Expr");
+
+      diag->Report(id) << expr->getSourceRange();
+      Visit(s, f, cs, dc, ast);
+    }
   }
 }
 
