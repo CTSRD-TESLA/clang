@@ -5,6 +5,7 @@
 #include "clang/AST/ASTConsumer.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/raw_os_ostream.h"
 
 #include <fstream>
 #include <map>
@@ -67,6 +68,9 @@ public:
   virtual void HandleTranslationUnit(ASTContext &ast);
 
 private:
+  void writeInstrumentationHeader(ostream& os, const vector<Stmt*>&);
+  void writeTemplateData(llvm::raw_ostream& os, const vector<TeslaAssertion>&);
+
   /// The file that we're instrumenting.
   StringRef filename;
 
@@ -117,6 +121,8 @@ private:
   const vector<string> functionsToInstrument;
 
   vector<Stmt*> instrumentation;
+
+  vector<TeslaAssertion> assertions;
 };
 
 
@@ -174,25 +180,18 @@ void TeslaInstrumenter::HandleTagDeclDefinition(TagDecl *tag) {
 }
 
 void TeslaInstrumenter::HandleTranslationUnit(ASTContext &ast) {
-  string headerFileName = (filename + "-tesla.h").str();
-  ofstream output(headerFileName.c_str());
+  if (instrumentation.size() > 0) {
+    string headerFileName = (filename + "-tesla.h").str();
+    ofstream headerFile(headerFileName.c_str());
+    writeInstrumentationHeader(headerFile, instrumentation);
+  }
 
-  // Print out a header file for instrumentation event handlers.
-  for (vector<Stmt*>::iterator i = instrumentation.begin();
-       i != instrumentation.end(); i++)
-    if (CallExpr *call = dyn_cast<CallExpr>(*i)) {
-
-      output
-        << call->getType().getAsString() << " "
-        << call->getDirectCallee()->getName().str() << "(";
-
-      for (size_t i = 0; i < call->getNumArgs();) {
-        output << call->getArg(i)->getType().getAsString();
-        if (++i != call->getNumArgs()) output << ", ";
-      }
-
-      output << ");\n";
-    }
+  if (assertions.size() > 0) {
+    string mechFileName = (filename + "-mech.c").str();
+    ofstream mechFile(mechFileName.c_str());
+    llvm::raw_os_ostream raw(mechFile);
+    writeTemplateData(raw, assertions);
+  }
 }
 
 
@@ -317,6 +316,7 @@ void TeslaInstrumenter::Visit(Expr *e, FunctionDecl *f, Stmt *s,
   // See if we can identify the start of a Tesla assertion block.
   TeslaAssertion tesla(e, cs, f, assertionCount[f], *diag);
   if (tesla.isValid()) {
+    assertions.push_back(tesla);
     store(tesla.replace(cs, s, ast, 2));
     assertionCount[f]++;
     return;
@@ -440,6 +440,126 @@ CompoundStmt* TeslaInstrumenter::makeCompound(Stmt *s, ASTContext &ast) {
 DiagnosticBuilder
 TeslaInstrumenter::warnAddingInstrumentation(SourceLocation loc) const {
   return diag->Report(loc, teslaWarningId);
+}
+
+
+
+void TeslaInstrumenter::writeInstrumentationHeader(
+    ostream& os, const vector<Stmt*>& instrumentation) {
+
+  // Print out a header file for instrumentation event handlers.
+  for (vector<Stmt*>::const_iterator i = instrumentation.begin();
+       i != instrumentation.end(); i++)
+    if (CallExpr *call = dyn_cast<CallExpr>(*i)) {
+
+      os
+        << call->getType().getAsString() << " "
+        << call->getDirectCallee()->getName().str() << "(";
+
+      for (size_t i = 0; i < call->getNumArgs();) {
+        os << call->getArg(i)->getType().getAsString();
+        if (++i != call->getNumArgs()) os << ", ";
+      }
+
+      os << ");\n";
+    }
+}
+
+void TeslaInstrumenter::writeTemplateData(
+    llvm::raw_ostream& out, const vector<TeslaAssertion>& assertions) {
+
+  for (vector<TeslaAssertion>::const_iterator i = assertions.begin();
+       i != assertions.end(); i++) {
+
+    const TeslaAssertion& a = *i;
+
+    out
+      << "assertion " << a.getName() << "\n"
+      << "ASSERT_FN: " << a.getDeclaringFunction()->getName() << "\n"
+      << "ASSERTION_EVENT: " << a.getName() << "("
+      ;
+
+    for (size_t i = 0; i < a.getVariableCount();) {
+      const ValueDecl *var = a.getVariable(i);
+
+      out << var->getType().getAsString() << " " << var->getName();
+      if (++i != a.getVariableCount()) out << ", ";
+    }
+    out << ")\n";
+
+    out << "STORAGE: TESLA_SCOPE_";
+    switch(a.getStorageClass()) {
+      case TeslaAssertion::GLOBAL:      out << "GLOBAL";       break;
+      case TeslaAssertion::PER_THREAD:  out << "PERTHREAD";   break;
+      case TeslaAssertion::UNKNOWN:     // fall through
+      default:
+        int id = diag->getCustomDiagID(
+            Diagnostic::Error, "Tesla storage not specified");
+
+        diag->Report(a.getMarker()->getLocStart(), id)
+          << a.getMarker()->getSourceRange();
+    }
+    out << "\n";
+
+    size_t maxPos = 0;
+
+    const TeslaAssertion::FunctionParamMap& fns = a.getReferencedFunctions();
+    typedef TeslaAssertion::FunctionParamMap::const_iterator FPIterator;
+    for (FPIterator i = fns.begin(); i != fns.end(); i++) {
+      FunctionDecl *fn = i->first;
+      const vector<Expr*>& params = i->second;
+
+      out << "STORE_STATE in ...prologue_" << fn->getName() << "():\n";
+
+      size_t pos = 1;
+      for (vector<Expr*>::const_iterator j = params.begin();
+           j != params.end(); j++) {
+
+        if (pos > maxPos) maxPos = pos;
+
+        DeclRefExpr *dre = dyn_cast<DeclRefExpr>((*j)->IgnoreParenCasts());
+        if (dre == NULL) continue;
+
+        ValueDecl *decl = dyn_cast<ValueDecl>(dre->getDecl());
+        if (decl == NULL) continue;
+        if (decl->getName() == "__tesla_dont_care") continue;
+
+        out
+          << "\ttip->ti_state[" << pos++
+          << "] = (register_t) " << decl->getName()
+          << ";\n";
+      }
+
+      out << "EXTRACT_STATE in ...return_" << fn->getName() << "():\n";
+      pos = 1;
+      for (vector<Expr*>::const_iterator j = params.begin();
+           j != params.end(); j++) {
+
+        DeclRefExpr *dre = dyn_cast<DeclRefExpr>((*j)->IgnoreParenCasts());
+        if (dre == NULL) continue;
+
+        ValueDecl *decl = dyn_cast<ValueDecl>(dre->getDecl());
+        if (decl == NULL) continue;
+        if (decl->getName() == "__tesla_dont_care") continue;
+
+        string t = decl->getType().getAsString();
+        out
+          << "\t" << t
+          << " " << decl->getName()
+          << " = (" << t << ") "
+          << "tip->ti_state[" << pos++
+          << "];\n";
+      }
+    }
+
+    maxPos++;     // Convert largest index into array size
+    out
+      << "COMPILE_TIME_CHECKS:\n"
+      << "\t#if (TESLA_STATE_SIZE <= " << maxPos << ")\n"
+      << "\t#error TESLA_STATE_SIZE is too small (need " << maxPos << ")\n"
+      << "\t#endif\n"
+      ;
+  }
 }
 
 
