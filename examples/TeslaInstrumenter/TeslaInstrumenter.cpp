@@ -10,6 +10,7 @@
 #include <fstream>
 #include <map>
 #include <set>
+#include <sstream>
 
 #include "Instrumentation.h"
 
@@ -68,8 +69,12 @@ public:
   virtual void HandleTranslationUnit(ASTContext &ast);
 
 private:
+  /// Write a header file which can be used to type-check event handlers.
   void writeInstrumentationHeader(ostream& os, const vector<Stmt*>&);
-  void writeTemplateData(llvm::raw_ostream& os, const vector<TeslaAssertion>&);
+
+  /// Write a set of variables which can be used to generate event handling
+  /// code from a parameterized template.
+  void writeTemplateVars(llvm::raw_ostream& os, const vector<TeslaAssertion>&);
 
   /// The file that we're instrumenting.
   StringRef filename;
@@ -187,10 +192,10 @@ void TeslaInstrumenter::HandleTranslationUnit(ASTContext &ast) {
   }
 
   if (assertions.size() > 0) {
-    string mechFileName = (filename + "-mech.c").str();
-    ofstream mechFile(mechFileName.c_str());
-    llvm::raw_os_ostream raw(mechFile);
-    writeTemplateData(raw, assertions);
+    string varFileName = (filename + ".vars").str();
+    ofstream varFile(varFileName.c_str());
+    llvm::raw_os_ostream raw(varFile);
+    writeTemplateVars(raw, assertions);
   }
 }
 
@@ -465,100 +470,102 @@ void TeslaInstrumenter::writeInstrumentationHeader(
     }
 }
 
-void TeslaInstrumenter::writeTemplateData(
-    llvm::raw_ostream& out, const vector<TeslaAssertion>& assertions) {
+
+/// A quick'n'dirty way to refer to a possibly-not-yet-instantiated output.
+///
+/// Such things make me yearn for Python and its collections.defaultdict().
+#define var(name) \
+  ((vars.count(name) > 0) ? *vars[name] : *(vars[name] = new ostringstream()))
+
+void TeslaInstrumenter::writeTemplateVars(
+    llvm::raw_ostream& out_stream, const vector<TeslaAssertion>& assertions) {
 
   for (vector<TeslaAssertion>::const_iterator i = assertions.begin();
        i != assertions.end(); i++) {
 
+    map<string, ostringstream*> vars;
+
     const TeslaAssertion& a = *i;
 
-    out
-      << "assertion " << a.getName() << "\n"
-      << "ASSERT_FN: " << a.getDeclaringFunction()->getName() << "\n"
-      << "ASSERTION_EVENT: " << a.getName() << "("
-      ;
+    // the name of the function containing the assertion
+    var("ASSERT_FN") << a.getDeclaringFunction()->getName().str();
 
+    // the assertion event handler
+    var("ASSERTION_EVENT") << a.getName() << "(";
     for (size_t i = 0; i < a.getVariableCount();) {
       const ValueDecl *var = a.getVariable(i);
-
-      out << var->getType().getAsString() << " " << var->getName();
-      if (++i != a.getVariableCount()) out << ", ";
+      var("ASSERTION_EVENT")
+        << var->getType().getAsString() << " " << var->getName().str()
+        << ((++i == a.getVariableCount()) ? "" : ", ");
     }
-    out << ")\n";
+    var("ASSERTION_EVENT") << ")";
 
-    out << "STORAGE: TESLA_SCOPE_";
-    switch(a.getStorageClass()) {
-      case TeslaAssertion::GLOBAL:      out << "GLOBAL";       break;
-      case TeslaAssertion::PER_THREAD:  out << "PERTHREAD";   break;
-      case TeslaAssertion::UNKNOWN:     // fall through
-      default:
-        int id = diag->getCustomDiagID(
-            Diagnostic::Error, "Tesla storage not specified");
+    // automata storage: global or thread-local
+    var("STORAGE")
+      << "TESLA_SCOPE_"
+      << ((a.getStorageClass() == TeslaAssertion::GLOBAL)
+          ? "GLOBAL" : "PERTHREAD");
 
-        diag->Report(a.getMarker()->getLocStart(), id)
-          << a.getMarker()->getSourceRange();
-    }
-    out << "\n";
-
+    // the longest parameter list
     size_t maxPos = 0;
 
     const TeslaAssertion::FunctionParamMap& fns = a.getReferencedFunctions();
     typedef TeslaAssertion::FunctionParamMap::const_iterator FPIterator;
+
+    // iterate over each function and its parameters
     for (FPIterator i = fns.begin(); i != fns.end(); i++) {
       FunctionDecl *fn = i->first;
       const vector<Expr*>& params = i->second;
 
-      out << "STORE_STATE in ...prologue_" << fn->getName() << "():\n";
+      // TODO: a more general name
+      var("MACCHECK") << fn->getName().str();
 
       size_t pos = 1;
-      for (vector<Expr*>::const_iterator j = params.begin();
-           j != params.end(); j++) {
+      for (size_t j = 0; j < params.size(); j++) {
+        DeclRefExpr *dre = dyn_cast<DeclRefExpr>(params[j]->IgnoreParenCasts());
+        if (dre == NULL) continue;
+
+        ValueDecl *decl = dyn_cast<ValueDecl>(dre->getDecl());
+        if (decl == NULL) continue;
+        if (decl->getName() == "__tesla_dont_care") continue;
+
+        string name = decl->getName().str();
+        string typeName = decl->getType().getAsString();
+        string comma = ((j + 1) == params.size()) ? "" : ", ";
+
+        var("REGISTERARGS_DECL")
+          << "\t" << typeName << " " << name << ";$";
+
+        var("REGISTERARGS") << name << comma;
+        var("KEYARGS") << "(register_t) " << name << comma;
+
+        var("STORE_STATE")
+          << "\ttip->ti_state[" << pos
+          << "] = (register_t) " << name << ";$";
+
+        var("EXTRACT_STATE")
+          << "\t" << name << " = (" << typeName << ") "
+          << "tip->ti_state[" << pos << "];$";
 
         if (pos > maxPos) maxPos = pos;
-
-        DeclRefExpr *dre = dyn_cast<DeclRefExpr>((*j)->IgnoreParenCasts());
-        if (dre == NULL) continue;
-
-        ValueDecl *decl = dyn_cast<ValueDecl>(dre->getDecl());
-        if (decl == NULL) continue;
-        if (decl->getName() == "__tesla_dont_care") continue;
-
-        out
-          << "\ttip->ti_state[" << pos++
-          << "] = (register_t) " << decl->getName()
-          << ";\n";
+        pos++;
       }
 
-      out << "EXTRACT_STATE in ...return_" << fn->getName() << "():\n";
-      pos = 1;
-      for (vector<Expr*>::const_iterator j = params.begin();
-           j != params.end(); j++) {
-
-        DeclRefExpr *dre = dyn_cast<DeclRefExpr>((*j)->IgnoreParenCasts());
-        if (dre == NULL) continue;
-
-        ValueDecl *decl = dyn_cast<ValueDecl>(dre->getDecl());
-        if (decl == NULL) continue;
-        if (decl->getName() == "__tesla_dont_care") continue;
-
-        string t = decl->getType().getAsString();
-        out
-          << "\t" << t
-          << " " << decl->getName()
-          << " = (" << t << ") "
-          << "tip->ti_state[" << pos++
-          << "];\n";
-      }
+      var("NUMARGS") << pos;
     }
 
     maxPos++;     // Convert largest index into array size
-    out
-      << "COMPILE_TIME_CHECKS:\n"
-      << "\t#if (TESLA_STATE_SIZE <= " << maxPos << ")\n"
-      << "\t#error TESLA_STATE_SIZE is too small (need " << maxPos << ")\n"
-      << "\t#endif\n"
+    var("COMPILE_TIME_CHECKS")
+      << "#if (TESLA_STATE_SIZE <= " << maxPos << ")$"
+      << "#error TESLA_STATE_SIZE is too small (need " << maxPos << ")$"
+      << "#endif"
       ;
+
+    for (map<string, ostringstream*>::iterator i = vars.begin();
+         i != vars.end(); i++) {
+      out_stream << i->first << ":" << i->second->str() << "\n";
+      delete i->second;
+    }
   }
 }
 
