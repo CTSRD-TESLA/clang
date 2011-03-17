@@ -3,6 +3,9 @@
 #ifndef TESLA_INSTRUMENTATION_H
 #define TESLA_INSTRUMENTATION_H
 
+#include <map>
+#include <set>
+
 #include "clang/AST/AST.h"
 
 
@@ -70,6 +73,16 @@ class Instrumentation {
 /// Instruments an assertion's point of declaration.
 class TeslaAssertion : public Instrumentation {
   public:
+    enum StorageClass {
+      UNKNOWN,
+      GLOBAL,
+      PER_THREAD
+    };
+
+    /// Maps functions to lists of parameters.
+    typedef std::map<clang::FunctionDecl*, std::vector<clang::Expr*> >
+      FunctionParamMap;
+
     /// Constructor.
     ///
     /// @param  e           the expression which might be the 'TESLA' marker
@@ -80,25 +93,58 @@ class TeslaAssertion : public Instrumentation {
     TeslaAssertion(clang::Expr *e, clang::CompoundStmt *cs,
         clang::FunctionDecl *f, int assertCount, clang::Diagnostic& d);
 
+    TeslaAssertion(const TeslaAssertion& original);
+    TeslaAssertion& operator= (const TeslaAssertion& rhs);
+
     bool isValid() const {
-      return ((parent != NULL) and (marker != NULL) and (assertion != NULL));
+      return ((parent != NULL) and (marker != NULL) and (assertion != NULL)
+          and (scopeBegin != NULL) and (scopeEnd != NULL));
     }
 
+    std::string getName() const { return handlerName; }
+    StorageClass getStorageClass() const { return storage; }
+    const clang::FunctionDecl *getDeclaringFunction() const { return f; }
+    const clang::FunctionDecl *getScopeBegin() const { return scopeBegin; }
+    const clang::FunctionDecl *getScopeEnd() const { return scopeEnd; }
+
+    const FunctionParamMap& getReferencedFunctions() const { return functions; }
+
+    size_t getVariableCount() const { return variableRefs.size(); }
+    const clang::ValueDecl* getVariable(size_t i) const;
+
+    /// Returns the actual CallExpr which marks the assertion start.
+    const clang::CallExpr* getMarker() const { return marker; }
+
+    /// Returns the assertion block.
+    const clang::CompoundStmt* getBlock() const { return assertion; }
+
+    // Instrumentation implementation
     virtual std::vector<clang::Stmt*> create(clang::ASTContext &ast);
 
   private:
-    /// Recursively searches for variable references.
-    void searchForVariables(clang::Stmt* s);
+    /// Recursively searches for variable and function references.
+    void searchForReferences(clang::Stmt* s);
 
-    std::string fnName;               ///< function containing declaration
+    clang::Diagnostic& diag;          ///< where we can report problems
+
+    clang::FunctionDecl *f;           ///< function containing the assertion
+    std::string handlerName;          ///< name of event handler
     int assertCount;                  ///< existing assertions in function
     clang::CompoundStmt *parent;      ///< where the assertion lives
 
     clang::CallExpr *marker;          ///< marks the beginning of an assertion
     clang::CompoundStmt *assertion;   ///< block of assertion "expressions"
 
+    StorageClass storage;             ///< where automata state is stored
+    clang::FunctionDecl *scopeBegin;  ///< where the automata start running
+    clang::FunctionDecl *scopeEnd;    ///< where the automata finish running
+
     /// varables referenced in the assertion
-    std::vector<clang::Expr*> references;
+    std::vector<clang::Expr*> variableRefs;
+    std::set<clang::Decl*> variables;   ///< for uniqification (unordered!)
+
+    /// functions referenced in the assertion, and the variables they refer to
+    FunctionParamMap functions;
 };
 
 

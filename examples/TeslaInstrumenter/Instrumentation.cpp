@@ -1,9 +1,13 @@
 #include <sstream>
 
+#include <llvm/ADT/StringSwitch.h>
+
 #include "Instrumentation.h"
 
 using namespace clang;
 using namespace std;
+
+using llvm::StringSwitch;
 
 
 /// Explicitly cast an expression to a type (probably only works for casting
@@ -143,10 +147,10 @@ string Instrumentation::eventHandlerName(const string& suffix) const {
 
 TeslaAssertion::TeslaAssertion(Expr *e, CompoundStmt *cs, FunctionDecl *f,
     int assertCount, Diagnostic& diag)
-  : fnName(f->getName()), assertCount(assertCount), parent(cs),
-    marker(dyn_cast<CallExpr>(e)), assertion(NULL)
+  : diag(diag), f(f), assertCount(assertCount), parent(cs),
+    marker(dyn_cast<CallExpr>(e)), assertion(NULL),
+    scopeBegin(NULL), scopeEnd(NULL)
 {
-
   // Filter out anything that isn't the magic marker we're looking for
   // (call to __tesla_start_of_assertion()).
   if (marker == NULL) return;
@@ -180,41 +184,111 @@ TeslaAssertion::TeslaAssertion(Expr *e, CompoundStmt *cs, FunctionDecl *f,
     return;
   }
 
-  searchForVariables(assertion);
+  stringstream suffix;
+  suffix << "assertion_";
+  suffix << f->getName().str();
+  suffix << "_";
+  suffix << assertCount;
+  handlerName = eventHandlerName(suffix.str());
+
+  // We expect the 'marker' to have three arguments:
+  //   storage      a call to __tesla_storage_(global|perthread)
+  //   scope_b      a call to __tesla_enter(a function)
+  //   scope_e      a call to __tesla_leave(a function)
+  const static size_t ARGS = 3;
+  assert(marker->getNumArgs() == ARGS);
+
+  FunctionDecl* callees[ARGS];
+  for (size_t i = 0; i < ARGS; i++) {
+    Expr *arg = marker->getArg(i)->IgnoreParenCasts();
+    CallExpr *call = dyn_cast<CallExpr>(arg);
+
+    if (call == NULL) {
+      int id = diag.getCustomDiagID(Diagnostic::Error,
+          "Tesla scope is not a function call");
+      diag.Report(arg->getLocStart(), id) << marker->getSourceRange();
+      return;
+    } else if ((callees[i] = call->getDirectCallee()) == NULL) {
+      int id = diag.getCustomDiagID(Diagnostic::Error,
+          "Tesla scope is not a function");
+      diag.Report(dre->getLocStart(), id) << marker->getSourceRange();
+      return;
+    }
+  }
+
+  storage = StringSwitch<StorageClass>(callees[0]->getName())
+    .Case("__tesla_storage_global", GLOBAL)
+    .Case("__tesla_storage_perthread", PER_THREAD)
+    .Default(UNKNOWN);
+
+  scopeBegin = callees[1];
+  scopeEnd = callees[2];
+
+  searchForReferences(assertion);
+}
+
+TeslaAssertion::TeslaAssertion(const TeslaAssertion& orig)
+  : Instrumentation(),
+    diag(orig.diag),
+    f(orig.f),
+    handlerName(orig.handlerName),
+    assertCount(orig.assertCount),
+    parent(orig.parent),
+    marker(orig.marker),
+    assertion(orig.assertion),
+    storage(orig.storage),
+    scopeBegin(orig.scopeBegin),
+    scopeEnd(orig.scopeEnd),
+    variableRefs(orig.variableRefs),
+    variables(orig.variables),
+    functions(orig.functions)
+{
+}
+
+TeslaAssertion& TeslaAssertion::operator= (const TeslaAssertion& rhs) {
+  *this = rhs;
+  return *this;
 }
 
 
-void TeslaAssertion::searchForVariables(Stmt *s) {
-  // Ignore callee function names; we're only interesting in fixing variables.
+void TeslaAssertion::searchForReferences(Stmt *s) {
   if (CallExpr *call = dyn_cast<CallExpr>(s)) {
+    FunctionDecl *fn = call->getDirectCallee();
+    if (fn == NULL) {
+      int id = diag.getCustomDiagID(Diagnostic::Error,
+          "Indirect function call within Tesla assertion");
+      diag.Report(call->getLocStart(), id) << s->getSourceRange();
+      return;
+    }
+
+    bool isRealFunction = !fn->getName().startswith("__tesla");
+    vector<Expr*> parameters;
+
     typedef CallExpr::arg_iterator ArgIterator;
-    for (ArgIterator i = call->arg_begin(); i != call->arg_end(); ++i)
-      searchForVariables(*i);
+    for (ArgIterator i = call->arg_begin(); i != call->arg_end(); ++i) {
+      if (isRealFunction) parameters.push_back(*i);
+      searchForReferences(*i);
+    }
+
+    if (isRealFunction) functions[fn] = parameters;
 
   } else if (s->children()) {
     for (StmtRange child = s->children(); child; child++) {
-      searchForVariables(*child);
+      searchForReferences(*child);
     }
 
   } else if (DeclRefExpr *dre = dyn_cast<DeclRefExpr>(s)) {
-    references.push_back(dre);
+    Decl *d = dre->getDecl();
+    if (variables.find(d) == variables.end()) {
+      variables.insert(d);
+      variableRefs.push_back(dre);
+    }
   }
 }
 
 
 vector<Stmt*> TeslaAssertion::create(ASTContext &ast) {
-  // What shall we call our event handler?
-  stringstream suffix;
-  suffix << "assertion_";
-  suffix << fnName;
-  suffix << "_";
-  suffix << assertCount;
-  string handlerName = eventHandlerName(suffix.str());
-
-  vector<Stmt*> statements;
-  statements.push_back(call(handlerName, ast.VoidTy, references, ast));
-
-  return statements;
+  return vector<Stmt*>(1, call(handlerName, ast.VoidTy, variableRefs, ast));
 }
 
 
@@ -263,6 +337,15 @@ vector<Stmt*> FunctionEntry::create(ASTContext &ast) {
         ast.VoidTy, parameters, ast));
 
   return statements;
+}
+
+
+const ValueDecl* TeslaAssertion::getVariable(size_t i) const {
+  assert(isa<DeclRefExpr>(variableRefs[i]->IgnoreParenCasts()));
+  DeclRefExpr *d = dyn_cast<DeclRefExpr>(variableRefs[i]->IgnoreParenCasts());
+
+  assert(isa<ValueDecl>(d->getDecl()));
+  return dyn_cast<ValueDecl>(d->getDecl());
 }
 
 
