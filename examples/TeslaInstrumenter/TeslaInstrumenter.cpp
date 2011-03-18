@@ -550,7 +550,7 @@ void TeslaInstrumenter::writeTemplateVars(
 
         // Values used to look up automata, provided by either the event
         // itself (e.g. __tesla_event_assertion(struct ucred* u)) or
-        // previously-stored state (see FN_.*_STATE, below).
+        // previously-stored state (see {STORE,EXTRACT}_STATE, below).
         var("KEYARGS") << "(register_t) " << name << comma;
 
         // Declaration of KEYARGS (e.g. in a function which extracts this
