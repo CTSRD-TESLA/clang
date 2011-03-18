@@ -548,6 +548,8 @@ void TeslaInstrumenter::writeTemplateVars(
         string typeName = decl->getType().getAsString();
         string comma = ((j + 1) == params.size()) ? "" : ", ";
 
+        var("PARAMS") << typeName << " " << name << comma;
+
         var("REGISTERARGS_DECL")
           << "\t" << typeName << " " << name << ";$";
 
