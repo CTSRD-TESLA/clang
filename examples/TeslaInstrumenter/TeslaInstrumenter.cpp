@@ -550,10 +550,9 @@ void TeslaInstrumenter::writeTemplateVars(
 
         var("PARAMS") << typeName << " " << name << comma;
 
-        var("REGISTERARGS_DECL")
+        var("KEYARGS_DECL")
           << "\t" << typeName << " " << name << ";$";
 
-        var("REGISTERARGS") << name << comma;
         var("KEYARGS") << "(register_t) " << name << comma;
 
         var("STORE_STATE")
