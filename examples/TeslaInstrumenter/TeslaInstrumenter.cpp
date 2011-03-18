@@ -477,6 +477,14 @@ void TeslaInstrumenter::writeInstrumentationHeader(
 #define var(name) \
   ((vars.count(name) > 0) ? *vars[name] : *(vars[name] = new ostringstream()))
 
+#define flush() \
+  for (map<string, ostringstream*>::iterator i = vars.begin(); \
+       i != vars.end(); i++) { \
+    out_stream << i->first << ":" << i->second->str() << "\n"; \
+    delete i->second; \
+  } \
+  vars.clear();
+
 void TeslaInstrumenter::writeTemplateVars(
     llvm::raw_ostream& out_stream, const vector<TeslaAssertion>& assertions) {
 
@@ -486,6 +494,10 @@ void TeslaInstrumenter::writeTemplateVars(
     map<string, ostringstream*> vars;
 
     const TeslaAssertion& a = *i;
+    out_stream
+      << "#\n"
+      << "# assertion: " << a.getName() << "\n"
+      << "#\n";
 
     // the name of the function containing the assertion
     var("ASSERT_FN") << a.getDeclaringFunction()->getName().str();
@@ -505,6 +517,8 @@ void TeslaInstrumenter::writeTemplateVars(
       << "TESLA_SCOPE_"
       << ((a.getStorageClass() == TeslaAssertion::GLOBAL)
           ? "GLOBAL" : "PERTHREAD");
+
+    flush();
 
     // the longest parameter list
     size_t maxPos = 0;
@@ -552,6 +566,8 @@ void TeslaInstrumenter::writeTemplateVars(
       }
 
       var("NUMARGS") << pos;
+
+      flush();
     }
 
     maxPos++;     // Convert largest index into array size
@@ -561,11 +577,7 @@ void TeslaInstrumenter::writeTemplateVars(
       << "#endif"
       ;
 
-    for (map<string, ostringstream*>::iterator i = vars.begin();
-         i != vars.end(); i++) {
-      out_stream << i->first << ":" << i->second->str() << "\n";
-      delete i->second;
-    }
+    flush();
   }
 }
 
