@@ -531,8 +531,9 @@ void TeslaInstrumenter::writeTemplateVars(
       FunctionDecl *fn = i->first;
       const vector<Expr*>& params = i->second;
 
-      // TODO: a more general name
-      var("MACCHECK") << fn->getName().str();
+      out_stream << "\n# function: " << fn->getName() << "\n";
+
+      var("INSTRUMENTED_FN") << fn->getName().str();
 
       size_t pos = 1;
       for (size_t j = 0; j < params.size(); j++) {
