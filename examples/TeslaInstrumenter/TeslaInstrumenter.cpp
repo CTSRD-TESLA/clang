@@ -531,7 +531,7 @@ void TeslaInstrumenter::writeTemplateVars(
       FunctionDecl *fn = i->first;
       const vector<Expr*>& params = i->second;
 
-      out_stream << "\n# function: " << fn->getName() << "\n";
+      out_stream << "\n# '" << fn->getName() << "()' events:\n";
 
       var("INSTRUMENTED_FN") << fn->getName().str();
 
@@ -548,20 +548,28 @@ void TeslaInstrumenter::writeTemplateVars(
         string typeName = decl->getType().getAsString();
         string comma = ((j + 1) == params.size()) ? "" : ", ";
 
-        var("PARAMS") << typeName << " " << name << comma;
+        // Values used to look up automata, provided by either the event
+        // itself (e.g. __tesla_event_assertion(struct ucred* u)) or
+        // previously-stored state (see FN_.*_STATE, below).
+        var("KEYARGS") << "(register_t) " << name << comma;
 
+        // Declaration of KEYARGS (e.g. in a function which extracts this
+        // data from a tesla_instance).
         var("KEYARGS_DECL")
           << "\t" << typeName << " " << name << ";$";
 
-        var("KEYARGS") << "(register_t) " << name << comma;
-
+        // Code to store function parameters in a tesla_instance.
         var("STORE_STATE")
           << "\ttip->ti_state[" << pos
           << "] = (register_t) " << name << ";$";
 
+        // Code to extract state (e.g. invocation params) from a tesla_instance.
         var("EXTRACT_STATE")
           << "\t" << name << " = (" << typeName << ") "
           << "tip->ti_state[" << pos << "];$";
+
+        // Parameters to the __tesla_event_function_prologue() event.
+        var("FN_ENTER_PARAMS") << typeName << " " << name << comma;
 
         if (pos > maxPos) maxPos = pos;
         pos++;
@@ -579,7 +587,13 @@ void TeslaInstrumenter::writeTemplateVars(
       << "#endif"
       ;
 
+    out_stream << "\n# static typechecking stuff\n";
     flush();
+    out_stream
+      << "#\n"
+      << "# end of assertion " << a.getName() << "\n"
+      << "#\n"
+      << "\n";
   }
 }
 
