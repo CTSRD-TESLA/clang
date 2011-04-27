@@ -518,6 +518,9 @@ void TeslaInstrumenter::writeTemplateVars(
       << ((a.getStorageClass() == TeslaAssertion::GLOBAL)
           ? "GLOBAL" : "PERTHREAD");
 
+    var("ASSERT_SCOPE_BEGIN") << a.getScopeBegin()->getNameInfo().getAsString();
+    var("ASSERT_SCOPE_END") << a.getScopeEnd()->getNameInfo().getAsString();
+
     flush();
 
     // the longest parameter list
