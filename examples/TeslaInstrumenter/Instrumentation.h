@@ -139,7 +139,7 @@ class TeslaAssertion : public Instrumentation {
     clang::FunctionDecl *scopeBegin;  ///< where the automata start running
     clang::FunctionDecl *scopeEnd;    ///< where the automata finish running
 
-    /// varables referenced in the assertion
+    /// variables referenced in the assertion
     std::vector<clang::Expr*> variableRefs;
     std::set<clang::Decl*> variables;   ///< for uniqification (unordered!)
 
