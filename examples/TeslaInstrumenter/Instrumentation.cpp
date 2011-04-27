@@ -25,7 +25,8 @@ FunctionDecl *declareFn(const string& name, QualType returnType,
 Expr *call(string name, QualType returnType, vector<Expr*>& params,
     ASTContext& ast, SourceLocation location = SourceLocation());
 
-
+/// Insert create(ast) (a vector of Stmnt*) into the children of c 
+/// before Stmt before. Returns create(ast) added.
 vector<Stmt*> Instrumentation::insert(
     CompoundStmt *c, const Stmt *before, ASTContext &ast) {
 
@@ -35,6 +36,7 @@ vector<Stmt*> Instrumentation::insert(
 
   for (StmtRange s = c->children(); s; s++) {
     if (*s == before) {
+      // XXX: This will insert toAdd multiple times, should it?
       for (vector<Stmt*>::iterator i = toAdd.begin(); i != toAdd.end(); i++)
         newChildren.push_back(*i);
       inserted = true;
@@ -51,7 +53,10 @@ vector<Stmt*> Instrumentation::insert(
   return toAdd;
 }
 
-
+// Replaces s and the len-1 following statements within the children of c with
+// create(ast). If create(ast) has fewer statements than len, NullStmts are
+// added after to make them of equal length. create(ast) must have at least len
+// elements. Returns the new statements inserted.
 vector<Stmt*> Instrumentation::replace(CompoundStmt *c, Stmt *s,
     ASTContext &ast, size_t len) {
 
@@ -76,6 +81,7 @@ vector<Stmt*> Instrumentation::replace(CompoundStmt *c, Stmt *s,
   return toAdd;
 }
 
+// Appends create(ast) after the last child of c. Returns create(ast)
 vector<Stmt*> Instrumentation::append(CompoundStmt *c, ASTContext &ast) {
 
   vector<Stmt*> newChildren;
@@ -90,12 +96,15 @@ vector<Stmt*> Instrumentation::append(CompoundStmt *c, ASTContext &ast) {
   return toAdd;
 }
 
-
+/// Create a temporary variable __tesla_tmp_<name>. Returns a pair
+/// where the first expression is a reference to the variable
+/// and the second statements assigns e to this variable.
 pair<Expr*, vector<Stmt*> > Instrumentation::makeLValue(
     Expr *e, const string& name, DeclContext *dc, ASTContext &ast,
     SourceLocation location) {
 
   pair<Expr*, vector<Stmt*> > result;
+  // XXX: Is returning an empty pair correct?
   if (e->isLValue()) return result;
 
   // Create a temporary variable to store the result of 'e'.
@@ -123,6 +132,7 @@ pair<Expr*, vector<Stmt*> > Instrumentation::makeLValue(
 }
 
 
+/// Returns name of t, with spaces replaced by "_"
 string Instrumentation::typeIdentifier(const QualType t) const {
   string name = t.getAsString();
 
@@ -132,6 +142,7 @@ string Instrumentation::typeIdentifier(const QualType t) const {
   return name;
 }
 
+/// Returns name of t
 string Instrumentation::typeIdentifier(const Type *t) const {
   return typeIdentifier(QualType(t, Qualifiers()));
 }
@@ -139,6 +150,7 @@ string Instrumentation::typeIdentifier(const Type *t) const {
 
 const string Instrumentation::PREFIX = "__tesla_event_";
 
+/// Returns __tesla_event_<suffix>
 string Instrumentation::eventHandlerName(const string& suffix) const {
   return PREFIX + suffix;
 }
@@ -251,6 +263,8 @@ TeslaAssertion& TeslaAssertion::operator= (const TeslaAssertion& rhs) {
 }
 
 
+/// Sets variables, variableRefs, functions[fn] = parameters based
+/// on variables and functions referenced in the assertion
 void TeslaAssertion::searchForReferences(Stmt *s) {
   if (CallExpr *call = dyn_cast<CallExpr>(s)) {
     FunctionDecl *fn = call->getDirectCallee();
@@ -261,6 +275,8 @@ void TeslaAssertion::searchForReferences(Stmt *s) {
       return;
     }
 
+    // In tesla.h, now, eventually, previously, invoked, returned,
+    // assigned, dont_care etc. are prepended with __tesla_  
     bool isRealFunction = !fn->getName().startswith("__tesla");
     vector<Expr*> parameters;
 
