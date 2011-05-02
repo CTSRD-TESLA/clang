@@ -76,6 +76,12 @@ private:
   /// code from a parameterized template.
   void writeTemplateVars(llvm::raw_ostream& os, const vector<TeslaAssertion>&);
 
+  // Write a .spec file based on referenced functions
+  void writeSpec(llvm::raw_ostream& os, const vector<TeslaAssertion>&);
+
+  // Write a instrumentation .c file based on referenced functions
+  void writeInstrumentation(llvm::raw_ostream& os, const vector<TeslaAssertion>&);
+
   /// The file that we're instrumenting.
   StringRef filename;
 
@@ -196,6 +202,20 @@ void TeslaInstrumenter::HandleTranslationUnit(ASTContext &ast) {
     ofstream varFile(varFileName.c_str());
     llvm::raw_os_ostream raw(varFile);
     writeTemplateVars(raw, assertions);
+  }
+
+  if (assertions.size() > 0) {
+    string varFileName = "generated.spec";
+    ofstream varFile(varFileName.c_str());
+    llvm::raw_os_ostream raw(varFile);
+    writeSpec(raw, assertions);
+  }
+
+  if (assertions.size() > 0) {
+    string varFileName = "generated.c";
+    ofstream varFile(varFileName.c_str());
+    llvm::raw_os_ostream raw(varFile);
+    writeInstrumentation(raw, assertions);
   }
 }
 
@@ -484,6 +504,66 @@ void TeslaInstrumenter::writeInstrumentationHeader(
     delete i->second; \
   } \
   vars.clear();
+
+void TeslaInstrumenter::writeSpec(
+    llvm::raw_ostream& out_stream, const vector<TeslaAssertion>& assertions) {
+
+  for (vector<TeslaAssertion>::const_iterator i = assertions.begin();
+       i != assertions.end(); i++) {
+
+    const TeslaAssertion& a = *i;
+    const TeslaAssertion::FunctionParamMap& fns = a.getReferencedFunctions();
+    typedef TeslaAssertion::FunctionParamMap::const_iterator FPIterator;
+
+    // iterate over each function and its parameters
+    for (FPIterator i = fns.begin(); i != fns.end(); i++) {
+      FunctionDecl *fn = i->first;
+
+      out_stream << "function," << fn->getName() << "\n";
+    }
+  }
+}
+
+void TeslaInstrumenter::writeInstrumentation(
+    llvm::raw_ostream& out_stream, const vector<TeslaAssertion>& assertions) {
+
+  for (vector<TeslaAssertion>::const_iterator i = assertions.begin();
+       i != assertions.end(); i++) {
+
+    const TeslaAssertion& a = *i;
+
+    out_stream << "void " << a.getName() << "(){ ; }\n";
+
+    const TeslaAssertion::FunctionParamMap& fns = a.getReferencedFunctions();
+    typedef TeslaAssertion::FunctionParamMap::const_iterator FPIterator;
+
+    // iterate over each function and its parameters
+    for (FPIterator i = fns.begin(); i != fns.end(); i++) {
+      FunctionDecl *fn = i->first;
+      const vector<Expr*>& params = i->second;
+
+      // XXX: Use ___tesla_event constant where possible
+      out_stream << "void __tesla_event_function_prologue_" << fn->getName() \
+	<< "(void **tesla_data";
+      for (size_t j = 0; j < params.size(); j++) {
+        // XXX: refactor from writeTemplateVars
+        DeclRefExpr *dre = dyn_cast<DeclRefExpr>(params[j]->IgnoreParenCasts());
+        if (dre == NULL) continue;
+
+        ValueDecl *decl = dyn_cast<ValueDecl>(dre->getDecl());
+        if (decl == NULL) continue;
+        if (decl->getName() == "__tesla_dont_care") continue;
+
+        string name = decl->getName().str();
+        string typeName = decl->getType().getAsString();
+        out_stream << ", " << typeName << " " << name;
+      }
+      out_stream << ") { ; } \n";
+      out_stream << "void __tesla_event_function_return_" << fn->getName() \
+	<< "(void **tesla_data, int retval) { ; } \n";
+    }
+  }
+}
 
 void TeslaInstrumenter::writeTemplateVars(
     llvm::raw_ostream& out_stream, const vector<TeslaAssertion>& assertions) {
