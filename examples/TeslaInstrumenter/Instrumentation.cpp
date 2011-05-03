@@ -226,6 +226,9 @@ TeslaAssertion::TeslaAssertion(Expr *e, CompoundStmt *cs, FunctionDecl *f,
       diag.Report(dre->getLocStart(), id) << marker->getSourceRange();
       return;
     }
+
+    // Output spec and instrumentation needed to identify scope entry and exit
+    searchForReferences(call);
   }
 
   storage = StringSwitch<StorageClass>(callees[0]->getName())
@@ -236,6 +239,7 @@ TeslaAssertion::TeslaAssertion(Expr *e, CompoundStmt *cs, FunctionDecl *f,
   scopeBegin = callees[1];
   scopeEnd = callees[2];
 
+  // Output spec and instrumentation needed to evaluate assertion
   searchForReferences(assertion);
 }
 
