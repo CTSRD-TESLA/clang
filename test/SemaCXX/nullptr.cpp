@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fcxx-exceptions -fexceptions -fsyntax-only -verify -std=c++0x -ffreestanding %s
+// RUN: %clang_cc1 -fcxx-exceptions -fexceptions -fsyntax-only -verify -std=c++11 -ffreestanding %s
 #include <stdint.h>
 
 typedef decltype(nullptr) nullptr_t;
@@ -60,6 +60,10 @@ nullptr_t f(nullptr_t null)
 
   // You can reinterpret_cast nullptr to an integer.
   (void)reinterpret_cast<uintptr_t>(nullptr);
+  (void)reinterpret_cast<uintptr_t>(*pn);
+
+  int *ip = *pn;
+  if (*pn) { }
 
   // You can throw nullptr.
   throw nullptr;
@@ -103,4 +107,79 @@ namespace test3 {
     // Don't warn when using nullptr with %p.
     f("%p", nullptr);
   }
+}
+
+static_assert(__is_scalar(nullptr_t), "");
+static_assert(__is_pod(nullptr_t), "");
+static_assert(sizeof(nullptr_t) == sizeof(void*), "");
+
+static_assert(!(nullptr < nullptr), "");
+static_assert(!(nullptr > nullptr), "");
+static_assert(  nullptr <= nullptr, "");
+static_assert(  nullptr >= nullptr, "");
+static_assert(  nullptr == nullptr, "");
+static_assert(!(nullptr != nullptr), "");
+
+static_assert(!(0 < nullptr), "");
+static_assert(!(0 > nullptr), "");
+static_assert(  0 <= nullptr, "");
+static_assert(  0 >= nullptr, "");
+static_assert(  0 == nullptr, "");
+static_assert(!(0 != nullptr), "");
+
+static_assert(!(nullptr < 0), "");
+static_assert(!(nullptr > 0), "");
+static_assert(  nullptr <= 0, "");
+static_assert(  nullptr >= 0, "");
+static_assert(  nullptr == 0, "");
+static_assert(!(nullptr != 0), "");
+
+namespace overloading {
+  int &f1(int*);
+  float &f1(bool);
+
+  void test_f1() {
+    int &ir = (f1)(nullptr);
+  }
+
+  struct ConvertsToNullPtr {
+    operator nullptr_t() const;
+  };
+
+  void test_conversion(ConvertsToNullPtr ctn) {
+    (void)(ctn == ctn);
+    (void)(ctn != ctn);
+    (void)(ctn <= ctn);
+    (void)(ctn >= ctn);
+    (void)(ctn < ctn);
+    (void)(ctn > ctn);
+  }
+}
+
+namespace templates {
+  template<typename T, nullptr_t Value>
+  struct X { 
+    X() { ptr = Value; }
+
+    T *ptr;
+  };
+  
+  X<int, nullptr> x;
+
+
+  template<int (*fp)(int), int* p, int A::* pmd, int (A::*pmf)(int)>
+  struct X2 {};
+  
+  X2<nullptr, nullptr, nullptr, nullptr> x2;
+}
+
+namespace null_pointer_constant {
+
+// Pending implementation of core issue 903, ensure we don't allow any of the
+// C++11 constant evaluation semantics in null pointer constants.
+struct S { int n; };
+constexpr int null() { return 0; }
+void *p = S().n; // expected-error {{cannot initialize}}
+void *q = null(); // expected-error {{cannot initialize}}
+
 }

@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify %s 
+// RUN: %clang_cc1 -fsyntax-only -verify -Wno-constant-conversion %s
 
 // Bool literals can be enum values.
 enum {
@@ -25,6 +25,9 @@ void static_assert_arg_is_bool(T x) {
 
 void test2() {
   int n = 2;
-  static_assert_arg_is_bool(n && 4);  // expected-warning {{use of logical && with constant operand}}
-  static_assert_arg_is_bool(n || 5);  // expected-warning {{use of logical || with constant operand}}
+  static_assert_arg_is_bool(n && 4);  // expected-warning {{use of logical '&&' with constant operand}} \
+                                      // expected-note {{use '&' for a bitwise operation}} \
+                                      // expected-note {{remove constant to silence this warning}}
+  static_assert_arg_is_bool(n || 5);  // expected-warning {{use of logical '||' with constant operand}} \
+                                      // expected-note {{use '|' for a bitwise operation}}
 }

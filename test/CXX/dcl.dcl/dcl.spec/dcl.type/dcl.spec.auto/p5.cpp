@@ -1,15 +1,15 @@
-// RUN: %clang_cc1 -fcxx-exceptions -fexceptions -fsyntax-only -verify %s -std=c++0x
+// RUN: %clang_cc1 -fcxx-exceptions -fexceptions -fsyntax-only -verify %s -std=c++11
 
 struct S {
   virtual ~S();
 
-  auto a; // expected-error{{'auto' not allowed in struct member}}
-  auto *b; // expected-error{{'auto' not allowed in struct member}}
-  const auto c; // expected-error{{'auto' not allowed in struct member}}
+  auto a; // expected-error{{'auto' not allowed in non-static struct member}}
+  auto *b; // expected-error{{'auto' not allowed in non-static struct member}}
+  const auto c; // expected-error{{'auto' not allowed in non-static struct member}}
 
   void f() throw (auto); // expected-error{{'auto' not allowed here}}
 
-  friend auto; // expected-error{{'auto' not allowed in struct member}}
+  friend auto; // expected-error{{'auto' not allowed in non-static struct member}}
 
   operator auto(); // expected-error{{'auto' not allowed here}}
 };
@@ -43,11 +43,10 @@ void j() {
   (void)sizeof(auto); // expected-error{{'auto' not allowed here}}
   (void)__alignof(auto); // expected-error{{'auto' not allowed here}}
 
-  // FIXME: don't issue the second diagnostic for this error.
-  U<auto> v; // expected-error{{'auto' not allowed in template argument}} unexpected-error{{C++ requires a type specifier}}
+  U<auto> v; // expected-error{{'auto' not allowed in template argument}}
 
   int n;
-  (void)dynamic_cast<auto&>(S()); // expected-error{{'auto' not allowed here}}
+  (void)dynamic_cast<auto&>(n); // expected-error{{'auto' not allowed here}}
   (void)static_cast<auto*>(&n); // expected-error{{'auto' not allowed here}}
   (void)reinterpret_cast<auto*>(&n); // expected-error{{'auto' not allowed here}}
   (void)const_cast<auto>(n); // expected-error{{'auto' not allowed here}}
@@ -61,9 +60,8 @@ int ints[] = {1, 2, 3};
 template <const auto (*a)[3] = &ints> class D { }; // expected-error{{'auto' not allowed in template parameter}}
 enum E : auto {}; // expected-error{{'auto' not allowed here}}
 struct F : auto {}; // expected-error{{expected class name}}
-template<typename T = auto> struct G { }; // expected-error{{'auto' not allowed here}}
+template<typename T = auto> struct G { }; // expected-error{{'auto' not allowed in template argument}}
 
-using A = auto; // expected-error{{expected ';'}} expected-error{{requires a qualified name}}
+using A = auto; // expected-error{{'auto' not allowed in type alias}}
 
-// FIXME: don't issue the second diagnostic for this error.
-auto k() -> auto; // expected-error{{'auto' not allowed here}} unexpected-error{{without trailing return type}}
+auto k() -> auto; // expected-error{{'auto' not allowed in function return type}}

@@ -9,6 +9,7 @@
 
 CLANG_LEVEL := ..
 
-PARALLEL_DIRS := clang-interpreter PrintFunctionNames TeslaInstrumenter
+PARALLEL_DIRS := analyzer-plugin clang-interpreter PrintFunctionNames \
+	TeslaInstrumenter
 
 include $(CLANG_LEVEL)/Makefile

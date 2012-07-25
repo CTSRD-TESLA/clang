@@ -11,8 +11,6 @@
 #define LLVM_CLANG_REWRITE_FRONTENDACTIONS_H
 
 #include "clang/Frontend/FrontendAction.h"
-#include <string>
-#include <vector>
 
 namespace clang {
 class FixItRewriter;
@@ -25,19 +23,19 @@ class FixItOptions;
 class HTMLPrintAction : public ASTFrontendAction {
 protected:
   virtual ASTConsumer *CreateASTConsumer(CompilerInstance &CI,
-                                         llvm::StringRef InFile);
+                                         StringRef InFile);
 };
 
 class FixItAction : public ASTFrontendAction {
 protected:
-  llvm::OwningPtr<FixItRewriter> Rewriter;
-  llvm::OwningPtr<FixItOptions> FixItOpts;
+  OwningPtr<FixItRewriter> Rewriter;
+  OwningPtr<FixItOptions> FixItOpts;
 
   virtual ASTConsumer *CreateASTConsumer(CompilerInstance &CI,
-                                         llvm::StringRef InFile);
+                                         StringRef InFile);
 
   virtual bool BeginSourceFileAction(CompilerInstance &CI,
-                                     llvm::StringRef Filename);
+                                     StringRef Filename);
 
   virtual void EndSourceFileAction();
 
@@ -48,10 +46,21 @@ public:
   ~FixItAction();
 };
 
+/// \brief Emits changes to temporary files and uses them for the original
+/// frontend action.
+class FixItRecompile : public WrapperFrontendAction {
+public:
+  FixItRecompile(FrontendAction *WrappedAction)
+    : WrapperFrontendAction(WrappedAction) {}
+
+protected:
+  virtual bool BeginInvocation(CompilerInstance &CI);
+};
+
 class RewriteObjCAction : public ASTFrontendAction {
 protected:
   virtual ASTConsumer *CreateASTConsumer(CompilerInstance &CI,
-                                         llvm::StringRef InFile);
+                                         StringRef InFile);
 };
 
 class RewriteMacrosAction : public PreprocessorFrontendAction {
@@ -60,6 +69,11 @@ protected:
 };
 
 class RewriteTestAction : public PreprocessorFrontendAction {
+protected:
+  void ExecuteAction();
+};
+
+class RewriteIncludesAction : public PreprocessorFrontendAction {
 protected:
   void ExecuteAction();
 };

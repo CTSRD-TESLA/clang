@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify -pedantic-errors %s 
+// RUN: %clang_cc1 -fsyntax-only -verify -pedantic-errors %s
 
 void f() {
   int a;
@@ -24,12 +24,41 @@ void f() {
   // Declarations.
   int fd(T(a)); // expected-warning {{parentheses were disambiguated as a function declarator}}
   T(*d)(int(p)); // expected-warning {{parentheses were disambiguated as a function declarator}} expected-note {{previous definition is here}}
+  typedef T(*td)(int(p));
+  extern T(*tp)(int(p));
+  T d3(); // expected-warning {{empty parentheses interpreted as a function declaration}} expected-note {{replace parentheses with an initializer}}
+  T d3v(void);
+  typedef T d3t();
+  extern T f3();
+  __typeof(*T()) f4(); // expected-warning {{empty parentheses interpreted as a function declaration}} expected-note {{replace parentheses with an initializer}}
+  typedef void *V;
+  __typeof(*V()) f5();
+  T multi1,
+    multi2(); // expected-warning {{empty parentheses interpreted as a function declaration}} expected-note {{replace parentheses with an initializer}}
   T(d)[5]; // expected-error {{redefinition of 'd'}}
   typeof(int[])(f) = { 1, 2 }; // expected-error {{extension used}}
   void(b)(int);
-  int(d2) __attribute__(()); 
+  int(d2) __attribute__(());
   if (int(a)=1) {}
   int(d3(int()));
+}
+
+struct RAII {
+  RAII();
+  ~RAII();
+};
+
+void func();
+namespace N {
+  struct S;
+
+  void emptyParens() {
+    RAII raii(); // expected-warning {{function declaration}} expected-note {{remove parentheses to declare a variable}}
+    int a, b, c, d, e, // expected-note {{change this ',' to a ';' to call 'func'}}
+    func(); // expected-warning {{function declaration}} expected-note {{replace parentheses with an initializer}}
+
+    S s(); // expected-warning {{function declaration}}
+  }
 }
 
 class C { };
@@ -40,4 +69,24 @@ int g(C);
 void foo() {
   fn(1); // expected-error {{no matching function}}
   fn(g); // OK
+}
+
+namespace PR11874 {
+void foo(); // expected-note 3 {{class 'foo' is hidden by a non-type declaration of 'foo' here}}
+class foo {};
+class bar {
+  bar() {
+    const foo* f1 = 0; // expected-error {{must use 'class' tag to refer to type 'foo' in this scope}}
+    foo* f2 = 0; // expected-error {{must use 'class' tag to refer to type 'foo' in this scope}}
+    foo f3; // expected-error {{must use 'class' tag to refer to type 'foo' in this scope}}
+  }
+};
+
+int baz; // expected-note 2 {{class 'baz' is hidden by a non-type declaration of 'baz' here}}
+class baz {};
+void fizbin() {
+  const baz* b1 = 0; // expected-error {{must use 'class' tag to refer to type 'baz' in this scope}}
+  baz* b2; // expected-error {{use of undeclared identifier 'b2'}}
+  baz b3; // expected-error {{must use 'class' tag to refer to type 'baz' in this scope}}
+}
 }

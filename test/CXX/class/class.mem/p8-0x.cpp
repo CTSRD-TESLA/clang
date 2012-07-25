@@ -1,11 +1,10 @@
-// RUN: %clang_cc1 -fsyntax-only -std=c++0x -verify %s 
+// RUN: %clang_cc1 -fsyntax-only -std=c++11 -verify %s 
 
 struct Base1 { 
   virtual void g();
 };
 
 struct A : Base1 {
-  virtual void f() new new; // expected-error {{class member already marked 'new'}}
   virtual void g() override override; // expected-error {{class member already marked 'override'}}
   virtual void h() final final; // expected-error {{class member already marked 'final'}}
 };
@@ -34,7 +33,6 @@ namespace inline_extension {
   };
 
   struct A : Base1 {
-    virtual void f() new new {} // expected-error {{class member already marked 'new'}}
     virtual void g() override override {} // expected-error {{class member already marked 'override'}}
     virtual void h() final final {} // expected-error {{class member already marked 'final'}}
   };

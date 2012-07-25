@@ -135,6 +135,23 @@ namespace PR5755 {
   }
 }
 
+namespace PR10480 {
+  template<typename T>
+  struct X {
+    X();
+    ~X() {
+      T *ptr = 1; // expected-error{{cannot initialize a variable of type 'int *' with an rvalue of type 'int'}}
+    }
+  };
+
+  template<typename T>
+  void f() {
+    new X<int>[1]; // expected-note{{in instantiation of member function 'PR10480::X<int>::~X' requested here}}
+  }
+
+  template void f<int>();
+}
+
 // ---------------------------------------------------------------------
 // throw expressions
 // ---------------------------------------------------------------------
@@ -264,6 +281,16 @@ template struct ArrowMemRef0<ArrowWrapper<InheritsMemInt*>, int&>;
 template struct ArrowMemRef0<ArrowWrapper<MemIntFunc*>, int (*)(int)>;
 template struct ArrowMemRef0<ArrowWrapper<MemInt*>, float&>; // expected-note{{instantiation}}
 template struct ArrowMemRef0<ArrowWrapper<ArrowWrapper<MemInt*> >, int&>;
+
+struct UnresolvedMemRefArray {
+  int f(int);
+  int f(char);
+};
+UnresolvedMemRefArray Arr[10];
+template<typename U> int UnresolvedMemRefArrayT(U u) {
+  return Arr->f(u);
+}
+template int UnresolvedMemRefArrayT<int>(int);
 
 // FIXME: we should be able to return a MemInt without the reference!
 MemInt &createMemInt(int);

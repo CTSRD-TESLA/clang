@@ -136,7 +136,7 @@ static void HandleX86ForceAlignArgPointerAttr(Decl *D,
   if (VD && VD->getType()->isFunctionPointerType())
     return;
   // Also don't warn on function pointer typedefs.
-  TypedefDecl *TD = dyn_cast<TypedefDecl>(D);
+  TypedefNameDecl *TD = dyn_cast<TypedefNameDecl>(D);
   if (TD && (TD->getUnderlyingType()->isFunctionPointerType() ||
              TD->getUnderlyingType()->isFunctionType()))
     return;
@@ -147,7 +147,20 @@ static void HandleX86ForceAlignArgPointerAttr(Decl *D,
     return;
   }
 
-  D->addAttr(::new (S.Context) X86ForceAlignArgPointerAttr(Attr.getLoc(), S.Context));
+  D->addAttr(::new (S.Context) X86ForceAlignArgPointerAttr(Attr.getRange(),
+                                                           S.Context));
+}
+
+DLLImportAttr *Sema::mergeDLLImportAttr(Decl *D, SourceRange Range) {
+  if (D->hasAttr<DLLExportAttr>()) {
+    Diag(Range.getBegin(), diag::warn_attribute_ignored) << "dllimport";
+    return NULL;
+  }
+
+  if (D->hasAttr<DLLImportAttr>())
+    return NULL;
+
+  return ::new (Context) DLLImportAttr(Range, Context);
 }
 
 static void HandleDLLImportAttr(Decl *D, const AttributeList &Attr, Sema &S) {
@@ -158,17 +171,12 @@ static void HandleDLLImportAttr(Decl *D, const AttributeList &Attr, Sema &S) {
   }
 
   // Attribute can be applied only to functions or variables.
-  if (isa<VarDecl>(D)) {
-    D->addAttr(::new (S.Context) DLLImportAttr(Attr.getLoc(), S.Context));
-    return;
-  }
-
   FunctionDecl *FD = dyn_cast<FunctionDecl>(D);
-  if (!FD) {
+  if (!FD && !isa<VarDecl>(D)) {
     // Apparently Visual C++ thinks it is okay to not emit a warning
     // in this case, so only emit a warning when -fms-extensions is not
     // specified.
-    if (!S.getLangOptions().Microsoft)
+    if (!S.getLangOpts().MicrosoftExt)
       S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
         << Attr.getName() << 2 /*variable and function*/;
     return;
@@ -176,27 +184,26 @@ static void HandleDLLImportAttr(Decl *D, const AttributeList &Attr, Sema &S) {
 
   // Currently, the dllimport attribute is ignored for inlined functions.
   // Warning is emitted.
-  if (FD->isInlineSpecified()) {
+  if (FD && FD->isInlineSpecified()) {
     S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << "dllimport";
     return;
   }
 
-  // The attribute is also overridden by a subsequent declaration as dllexport.
-  // Warning is emitted.
-  for (AttributeList *nextAttr = Attr.getNext(); nextAttr;
-       nextAttr = nextAttr->getNext()) {
-    if (nextAttr->getKind() == AttributeList::AT_dllexport) {
-      S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << "dllimport";
-      return;
-    }
+  DLLImportAttr *NewAttr = S.mergeDLLImportAttr(D, Attr.getRange());
+  if (NewAttr)
+    D->addAttr(NewAttr);
+}
+
+DLLExportAttr *Sema::mergeDLLExportAttr(Decl *D, SourceRange Range) {
+  if (DLLImportAttr *Import = D->getAttr<DLLImportAttr>()) {
+    Diag(Import->getLocation(), diag::warn_attribute_ignored) << "dllimport";
+    D->dropAttr<DLLImportAttr>();
   }
 
-  if (D->getAttr<DLLExportAttr>()) {
-    S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << "dllimport";
-    return;
-  }
+  if (D->hasAttr<DLLExportAttr>())
+    return NULL;
 
-  D->addAttr(::new (S.Context) DLLImportAttr(Attr.getLoc(), S.Context));
+  return ::new (Context) DLLExportAttr(Range, Context);
 }
 
 static void HandleDLLExportAttr(Decl *D, const AttributeList &Attr, Sema &S) {
@@ -207,13 +214,8 @@ static void HandleDLLExportAttr(Decl *D, const AttributeList &Attr, Sema &S) {
   }
 
   // Attribute can be applied only to functions or variables.
-  if (isa<VarDecl>(D)) {
-    D->addAttr(::new (S.Context) DLLExportAttr(Attr.getLoc(), S.Context));
-    return;
-  }
-
   FunctionDecl *FD = dyn_cast<FunctionDecl>(D);
-  if (!FD) {
+  if (!FD && !isa<VarDecl>(D)) {
     S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
       << Attr.getName() << 2 /*variable and function*/;
     return;
@@ -221,13 +223,15 @@ static void HandleDLLExportAttr(Decl *D, const AttributeList &Attr, Sema &S) {
 
   // Currently, the dllexport attribute is ignored for inlined functions, unless
   // the -fkeep-inline-functions flag has been used. Warning is emitted;
-  if (FD->isInlineSpecified()) {
+  if (FD && FD->isInlineSpecified()) {
     // FIXME: ... unless the -fkeep-inline-functions flag has been used.
     S.Diag(Attr.getLoc(), diag::warn_attribute_ignored) << "dllexport";
     return;
   }
 
-  D->addAttr(::new (S.Context) DLLExportAttr(Attr.getLoc(), S.Context));
+  DLLExportAttr *NewAttr = S.mergeDLLExportAttr(D, Attr.getRange());
+  if (NewAttr)
+    D->addAttr(NewAttr);
 }
 
 namespace {
@@ -236,19 +240,20 @@ namespace {
     X86AttributesSema() { }
     bool ProcessDeclAttribute(Scope *scope, Decl *D,
                               const AttributeList &Attr, Sema &S) const {
-      const llvm::Triple &Triple(S.Context.Target.getTriple());
+      const llvm::Triple &Triple(S.Context.getTargetInfo().getTriple());
       if (Triple.getOS() == llvm::Triple::Win32 ||
           Triple.getOS() == llvm::Triple::MinGW32) {
         switch (Attr.getKind()) {
-        case AttributeList::AT_dllimport: HandleDLLImportAttr(D, Attr, S);
+        case AttributeList::AT_DLLImport: HandleDLLImportAttr(D, Attr, S);
                                           return true;
-        case AttributeList::AT_dllexport: HandleDLLExportAttr(D, Attr, S);
+        case AttributeList::AT_DLLExport: HandleDLLExportAttr(D, Attr, S);
                                           return true;
         default:                          break;
         }
       }
-      if (Attr.getName()->getName() == "force_align_arg_pointer" ||
-          Attr.getName()->getName() == "__force_align_arg_pointer__") {
+      if (Triple.getArch() != llvm::Triple::x86_64 &&
+          (Attr.getName()->getName() == "force_align_arg_pointer" ||
+           Attr.getName()->getName() == "__force_align_arg_pointer__")) {
         HandleX86ForceAlignArgPointerAttr(D, Attr, S);
         return true;
       }
@@ -261,16 +266,16 @@ const TargetAttributesSema &Sema::getTargetAttributesSema() const {
   if (TheTargetAttributesSema)
     return *TheTargetAttributesSema;
 
-  const llvm::Triple &Triple(Context.Target.getTriple());
+  const llvm::Triple &Triple(Context.getTargetInfo().getTriple());
   switch (Triple.getArch()) {
-  default:
-    return *(TheTargetAttributesSema = new TargetAttributesSema);
-
   case llvm::Triple::msp430:
     return *(TheTargetAttributesSema = new MSP430AttributesSema);
   case llvm::Triple::mblaze:
     return *(TheTargetAttributesSema = new MBlazeAttributesSema);
   case llvm::Triple::x86:
+  case llvm::Triple::x86_64:
     return *(TheTargetAttributesSema = new X86AttributesSema);
+  default:
+    return *(TheTargetAttributesSema = new TargetAttributesSema);
   }
 }

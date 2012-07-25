@@ -16,6 +16,7 @@
 
 #include "clang/Basic/Diagnostic.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
 
 namespace clang {
 
@@ -56,7 +57,7 @@ public:
     /// BlockScope - This is a scope that corresponds to a block/closure object.
     /// Blocks serve as top-level scopes for some objects like labels, they
     /// also prevent things like break and continue.  BlockScopes always have
-    /// the FnScope, BreakScope, ContinueScope, and DeclScope flags set as well.
+    /// the FnScope and DeclScope flags set as well.
     BlockScope = 0x40,
 
     /// TemplateParamScope - This is a scope that corresponds to the
@@ -70,12 +71,18 @@ public:
     FunctionPrototypeScope = 0x100,
 
     /// AtCatchScope - This is a scope that corresponds to the Objective-C
-    /// @catch statement.
+    /// \@catch statement.
     AtCatchScope = 0x200,
     
     /// ObjCMethodScope - This scope corresponds to an Objective-C method body.
     /// It always has FnScope and DeclScope set as well.
-    ObjCMethodScope = 0x400
+    ObjCMethodScope = 0x400,
+
+    /// SwitchScope - This is a scope that corresponds to a switch statement.
+    SwitchScope = 0x800,
+
+    /// TryScope - This is the scope of a C++ try statement.
+    TryScope = 0x1000
   };
 private:
   /// The parent scope for this scope.  This is null for the translation-unit
@@ -90,19 +97,23 @@ private:
   /// interrelates with other control flow statements.
   unsigned short Flags;
 
+  /// PrototypeDepth - This is the number of function prototype scopes
+  /// enclosing this scope, including this scope.
+  unsigned short PrototypeDepth;
+
+  /// PrototypeIndex - This is the number of parameters currently
+  /// declared in this scope.
+  unsigned short PrototypeIndex;
+
   /// FnParent - If this scope has a parent scope that is a function body, this
   /// pointer is non-null and points to it.  This is used for label processing.
   Scope *FnParent;
 
-  /// BreakParent/ContinueParent - This is a direct link to the immediately
-  /// preceeding BreakParent/ContinueParent if this scope is not one, or null if
-  /// there is no containing break/continue scope.
+  /// BreakParent/ContinueParent - This is a direct link to the innermost
+  /// BreakScope/ContinueScope which contains the contents of this scope
+  /// for control flow purposes (and might be this scope itself), or null
+  /// if there is no such scope.
   Scope *BreakParent, *ContinueParent;
-
-  /// ControlParent - This is a direct link to the immediately
-  /// preceeding ControlParent if this scope is not one, or null if
-  /// there is no containing control scope.
-  Scope *ControlParent;
 
   /// BlockParent - This is a direct link to the immediately containing
   /// BlockScope if this scope is not one, or null if there is none.
@@ -129,14 +140,14 @@ private:
   /// maintained by the Action implementation.
   void *Entity;
 
-  typedef llvm::SmallVector<UsingDirectiveDecl *, 2> UsingDirectivesTy;
+  typedef SmallVector<UsingDirectiveDecl *, 2> UsingDirectivesTy;
   UsingDirectivesTy UsingDirectives;
 
   /// \brief Used to determine if errors occurred in this scope.
   DiagnosticErrorTrap ErrorTrap;
   
 public:
-  Scope(Scope *Parent, unsigned ScopeFlags, Diagnostic &Diag)
+  Scope(Scope *Parent, unsigned ScopeFlags, DiagnosticsEngine &Diag)
     : ErrorTrap(Diag) {
     Init(Parent, ScopeFlags);
   }
@@ -160,12 +171,9 @@ public:
   Scope *getFnParent() { return FnParent; }
 
   /// getContinueParent - Return the closest scope that a continue statement
-  /// would be affected by.  If the closest scope is a closure scope, we know
-  /// that there is no loop *inside* the closure.
+  /// would be affected by.
   Scope *getContinueParent() {
-    if (ContinueParent && !ContinueParent->isBlockScope())
-      return ContinueParent;
-    return 0;
+    return ContinueParent;
   }
 
   const Scope *getContinueParent() const {
@@ -173,25 +181,32 @@ public:
   }
 
   /// getBreakParent - Return the closest scope that a break statement
-  /// would be affected by.  If the closest scope is a block scope, we know
-  /// that there is no loop *inside* the block.
+  /// would be affected by.
   Scope *getBreakParent() {
-    if (BreakParent && !BreakParent->isBlockScope())
-      return BreakParent;
-    return 0;
+    return BreakParent;
   }
   const Scope *getBreakParent() const {
     return const_cast<Scope*>(this)->getBreakParent();
   }
-
-  Scope *getControlParent() { return ControlParent; }
-  const Scope *getControlParent() const { return ControlParent; }
 
   Scope *getBlockParent() { return BlockParent; }
   const Scope *getBlockParent() const { return BlockParent; }
 
   Scope *getTemplateParamParent() { return TemplateParamParent; }
   const Scope *getTemplateParamParent() const { return TemplateParamParent; }
+
+  /// Returns the number of function prototype scopes in this scope
+  /// chain.
+  unsigned getFunctionPrototypeDepth() const {
+    return PrototypeDepth;
+  }
+
+  /// Return the number of parameters declared in this function
+  /// prototype, increasing it by one for the next call.
+  unsigned getNextFunctionPrototypeIndex() {
+    assert(isFunctionPrototypeScope());
+    return PrototypeIndex++;
+  }
 
   typedef DeclSetTy::iterator decl_iterator;
   decl_iterator decl_begin() const { return DeclsInScope.begin(); }
@@ -255,10 +270,31 @@ public:
     return getFlags() & Scope::FunctionPrototypeScope;
   }
 
-  /// isAtCatchScope - Return true if this scope is @catch.
+  /// isAtCatchScope - Return true if this scope is \@catch.
   bool isAtCatchScope() const {
     return getFlags() & Scope::AtCatchScope;
   }
+
+  /// isSwitchScope - Return true if this scope is a switch scope.
+  bool isSwitchScope() const {
+    for (const Scope *S = this; S; S = S->getParent()) {
+      if (S->getFlags() & Scope::SwitchScope)
+        return true;
+      else if (S->getFlags() & (Scope::FnScope | Scope::ClassScope |
+                                Scope::BlockScope | Scope::TemplateParamScope |
+                                Scope::FunctionPrototypeScope |
+                                Scope::AtCatchScope | Scope::ObjCMethodScope))
+        return false;
+    }
+    return false;
+  }
+  
+  /// \brief Determine whether this scope is a C++ 'try' block.
+  bool isTryScope() const { return getFlags() & Scope::TryScope; }
+
+  /// containedInPrototypeScope - Return true if this or a parent scope
+  /// is a FunctionPrototypeScope.
+  bool containedInPrototypeScope() const;
 
   typedef UsingDirectivesTy::iterator udir_iterator;
   typedef UsingDirectivesTy::const_iterator const_udir_iterator;
@@ -285,36 +321,7 @@ public:
 
   /// Init - This is used by the parser to implement scope caching.
   ///
-  void Init(Scope *Parent, unsigned ScopeFlags) {
-    AnyParent = Parent;
-    Depth = AnyParent ? AnyParent->Depth+1 : 0;
-    Flags = ScopeFlags;
-    
-    if (AnyParent) {
-      FnParent       = AnyParent->FnParent;
-      BreakParent    = AnyParent->BreakParent;
-      ContinueParent = AnyParent->ContinueParent;
-      ControlParent = AnyParent->ControlParent;
-      BlockParent  = AnyParent->BlockParent;
-      TemplateParamParent = AnyParent->TemplateParamParent;
-    } else {
-      FnParent = BreakParent = ContinueParent = BlockParent = 0;
-      ControlParent = 0;
-      TemplateParamParent = 0;
-    }
-
-    // If this scope is a function or contains breaks/continues, remember it.
-    if (Flags & FnScope)            FnParent = this;
-    if (Flags & BreakScope)         BreakParent = this;
-    if (Flags & ContinueScope)      ContinueParent = this;
-    if (Flags & ControlScope)       ControlParent = this;
-    if (Flags & BlockScope)         BlockParent = this;
-    if (Flags & TemplateParamScope) TemplateParamParent = this;
-    DeclsInScope.clear();
-    UsingDirectives.clear();
-    Entity = 0;
-    ErrorTrap.reset();
-  }
+  void Init(Scope *parent, unsigned flags);
 };
 
 }  // end namespace clang

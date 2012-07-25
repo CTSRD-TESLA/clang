@@ -74,7 +74,7 @@ class U {
   union { int b; double d; };
 
   U() :  a(1), // expected-note {{previous initialization is here}}
-         p(0), // expected-error {{initializing multiple members of anonymous union}}
+         p(0), // expected-error {{initializing multiple members of union}}
          d(1.0)  {}
 };
 
@@ -126,21 +126,24 @@ struct Q {
 
 // A silly class used to demonstrate field-is-uninitialized in constructors with
 // multiple params.
+int IntParam(int i) { return 0; };
 class TwoInOne { public: TwoInOne(TwoInOne a, TwoInOne b) {} };
 class InitializeUsingSelfTest {
   bool A;
   char* B;
   int C;
   TwoInOne D;
-  InitializeUsingSelfTest(int E)
+  int E;
+  InitializeUsingSelfTest(int F)
       : A(A),  // expected-warning {{field is uninitialized when used here}}
         B((((B)))),  // expected-warning {{field is uninitialized when used here}}
         C(A && InitializeUsingSelfTest::C),  // expected-warning {{field is uninitialized when used here}}
         D(D,  // expected-warning {{field is uninitialized when used here}}
-          D) {}  // expected-warning {{field is uninitialized when used here}}
+          D), // expected-warning {{field is uninitialized when used here}}
+        E(IntParam(E)) {} // expected-warning {{field is uninitialized when used here}}
 };
 
-int IntWrapper(int i) { return 0; };
+int IntWrapper(int &i) { return 0; };
 class InitializeUsingSelfExceptions {
   int A;
   int B;
@@ -267,4 +270,16 @@ struct S4 {
   S4() : s1(s1.baz()) {}
 };
 
+}
+
+namespace PR12049 {
+  int function();
+
+  class Class
+  {
+  public:
+      Class() : member(function() {} // expected-note {{to match this '('}}
+
+      int member; // expected-error {{expected ')'}}
+  };
 }

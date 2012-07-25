@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -triple=i686-apple-darwin9 -emit-llvm -o %t %s
+// RUN: %clang_cc1 -triple i686-apple-darwin9 -fobjc-runtime=macosx-fragile-10.5 -emit-llvm -o %t %s
 // RUN: FileCheck < %t %s
 //
 // CHECK: @"\01L_OBJC_METH_VAR_TYPE_34" = internal global [16 x i8] c"v12@0:4[3[4@]]8\00"
@@ -144,3 +144,24 @@ struct s8 {
   long double x;
 };
 const char g8[] = @encode(struct s8);
+
+// CHECK: @g9 = constant [11 x i8] c"{S9=i[0i]}\00"
+struct S9 {
+  int x;
+  int flex[];
+};
+const char g9[] = @encode(struct S9);
+
+struct f
+{
+  int i;
+  struct{} g[4];
+  int tt;
+};
+
+// CHECK: @g10 = constant [14 x i8] c"{f=i[0{?=}]i}\00"
+const char g10[] = @encode(struct f);
+
+// rdar://9622422
+// CHECK: @g11 = constant [2 x i8] c"v\00"
+const char g11[] = @encode(void);

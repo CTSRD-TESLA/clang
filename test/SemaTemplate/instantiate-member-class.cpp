@@ -1,5 +1,28 @@
 // RUN: %clang_cc1 -fsyntax-only -verify %s
 
+namespace PR8965 {
+  template<typename T>
+  struct X {
+    typedef int type;
+
+    T field; // expected-note{{in instantiation of member class}}
+  };
+
+  template<typename T>
+  struct Y {
+    struct Inner;
+
+    typedef typename X<Inner>::type // expected-note{{in instantiation of template class}}
+      type; // expected-note{{not-yet-instantiated member is declared here}}
+
+    struct Inner {
+      typedef type field; // expected-error{{no member 'type' in 'PR8965::Y<int>'; it has not yet been instantiated}}
+    };
+  };
+
+  Y<int> y; // expected-note{{in instantiation of template class}}
+}
+
 template<typename T>
 class X {
 public:
@@ -80,4 +103,40 @@ namespace test2 {
     int x;
   };
   template class C<int>;
+}
+
+namespace AliasTagDef {
+  template<typename T>
+  struct F {
+    using S = struct U { // expected-warning {{C++11}}
+      T g() {
+        return T();
+      }
+    };
+  };
+
+  int m = F<int>::S().g();
+  int n = F<int>::U().g();
+}
+
+namespace rdar10397846 {
+  template<int I> struct A
+  {
+    struct B
+    {
+      struct C { C() { int *ptr = I; } }; // expected-error{{cannot initialize a variable of type 'int *' with an rvalue of type 'int'}}
+    };
+  };
+
+  template<int N> void foo()
+  {
+    class A<N>::B::C X; // expected-note{{in instantiation of member function}}
+    int A<N+1>::B::C::*member = 0;
+  }
+
+  void bar()
+  {
+    foo<0>();
+    foo<1>(); // expected-note{{in instantiation of function template}}
+  }
 }

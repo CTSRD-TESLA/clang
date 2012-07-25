@@ -175,16 +175,40 @@ void test_missing_open_more() {
   A *a = A class_method3];
 }
 
+void test_block_invoke(A *(^block1)(int), 
+                       int (^block2)(int), 
+                       id (^block3)(int)) {
+  [block1(5) init];
+}
+
+@interface DO
+- (void)method:(in bycopy A*)ain result:(out byref A**)aout;
+@end
+
+void test_DO(DO *d, A* a) {
+  [d method:a aout:&a];
+}
+
 // RUN: c-index-test -code-completion-at=%s:23:19 %s | FileCheck -check-prefix=CHECK-CC1 %s
-// CHECK-CC1: {TypedText categoryClassMethod}
-// CHECK-CC1: {TypedText classMethod1:}{Placeholder (id)}{HorizontalSpace  }{TypedText withKeyword:}{Placeholder (int)}
-// CHECK-CC1: {TypedText classMethod2}
-// CHECK-CC1: {TypedText new}
-// CHECK-CC1: {TypedText protocolClassMethod}
+// CHECK-CC1: {TypedText categoryClassMethod} (35) (parent: ObjCCategoryDecl 'Foo(FooTestCategory)')
+// CHECK-CC1: {TypedText classMethod1:}{Placeholder (id)}{HorizontalSpace  }{TypedText withKeyword:}{Placeholder (int)} (35) (parent: ObjCInterfaceDecl 'Foo')
+// CHECK-CC1: {TypedText classMethod2} (35) (parent: ObjCInterfaceDecl 'Foo')
+// CHECK-CC1: {TypedText new} (35) (parent: ObjCInterfaceDecl 'Foo')
+// CHECK-CC1: {TypedText protocolClassMethod} (37) (parent: ObjCProtocolDecl 'FooTestProtocol')
+// CHECK-CC1: Completion contexts:
+// CHECK-CC1-NEXT: Objective-C class method
+// CHECK-CC1-NEXT: Container Kind: ObjCInterfaceDecl
+// CHECK-CC1-NEXT: Container is complete
+// CHECK-CC1-NEXT: Container USR: c:objc(cs)Foo
 // RUN: c-index-test -code-completion-at=%s:24:8 %s | FileCheck -check-prefix=CHECK-CC2 %s
 // CHECK-CC2: {TypedText categoryInstanceMethod}
 // CHECK-CC2: {TypedText instanceMethod1}
 // CHECK-CC2: {TypedText protocolInstanceMethod:}{Placeholder (int)}
+// CHECK-CC2: Completion contexts:
+// CHECK-CC2-NEXT: Objective-C instance method
+// CHECK-CC2-NEXT: Container Kind: ObjCInterfaceDecl
+// CHECK-CC2-NEXT: Container is complete
+// CHECK-CC2-NEXT: Container USR: c:objc(cs)Foo
 // RUN: c-index-test -code-completion-at=%s:61:16 %s | FileCheck -check-prefix=CHECK-CC3 %s
 // CHECK-CC3: ObjCClassMethodDecl:{ResultType int}{TypedText MyClassMethod:}{Placeholder (id)}
 // CHECK-CC3: ObjCClassMethodDecl:{ResultType int}{TypedText MyPrivateMethod}
@@ -212,6 +236,7 @@ void test_missing_open_more() {
 // RUN: c-index-test -code-completion-at=%s:95:24 %s | FileCheck -check-prefix=CHECK-CC9 %s
 // CHECK-CC9: ObjCInstanceMethodDecl:{ResultType int}{Informative Method:}{Informative Arg1:}{TypedText Arg2:}{Placeholder (int)}
 // CHECK-CC9: ObjCInstanceMethodDecl:{ResultType int}{Informative Method:}{Informative Arg1:}{TypedText OtherArg:}{Placeholder (id)}
+// CHECK-CC9: Objective-C selector: Method:Arg1:
 // RUN: c-index-test -code-completion-at=%s:61:11 %s | FileCheck -check-prefix=CHECK-CCA %s
 // CHECK-CCA: TypedefDecl:{TypedText Class}
 // CHECK-CCA-NEXT: ObjCInterfaceDecl:{TypedText Foo}
@@ -237,6 +262,7 @@ void test_missing_open_more() {
 // CHECK-CCD: ObjCClassMethodDecl:{ResultType int}{Informative Method:}{TypedText Arg1:}{Placeholder (int)}{HorizontalSpace  }{TypedText OtherArg:}{Placeholder (id)}
 // CHECK-CCD: ObjCClassMethodDecl:{ResultType int}{Informative Method:}{TypedText SomeArg:}{Placeholder (int)}{HorizontalSpace  }{TypedText OtherArg:}{Placeholder (id)}
 // CHECK-CCD-NOT: ObjCClassMethodDecl:{ResultType int}{Informative Method:}{TypedText }
+// CHECK-CCD: Objective-C selector: Method:
 // RUN: c-index-test -code-completion-at=%s:116:30 %s | FileCheck -check-prefix=CHECK-CCE %s
 // CHECK-CCE: ObjCClassMethodDecl:{ResultType int}{Informative Method:}{Informative Arg1:}{TypedText Arg2:}{Placeholder (int)}
 // CHECK-CCE: ObjCClassMethodDecl:{ResultType int}{Informative Method:}{Informative Arg1:}{TypedText OtherArg:}{Placeholder (id)}
@@ -283,7 +309,13 @@ void test_missing_open_more() {
 
 // RUN: c-index-test -code-completion-at=%s:170:16 %s | FileCheck -check-prefix=CHECK-CLASS-RESULT %s
 // CHECK-CLASS-RESULT: ObjCClassMethodDecl:{ResultType void}{TypedText class_method3} (35)
-// CHECK-CLASS-RESULT: ObjCClassMethodDecl:{ResultType void}{TypedText class_method4} (35)
+// CHECK-CLASS-RESULT: ObjCClassMethodDecl:{ResultType void}{TypedText class_method4} (35) (parent: ObjCCategoryDecl 'A(Cat)')
+
+// RUN: c-index-test -code-completion-at=%s:181:4 %s | FileCheck -check-prefix=CHECK-BLOCK-RECEIVER %s
+// CHECK-BLOCK-RECEIVER: ObjCInterfaceDecl:{TypedText A} (50)
+// CHECK-BLOCK-RECEIVER: ObjCInterfaceDecl:{TypedText B} (50)
+// CHECK-BLOCK-RECEIVER: ParmDecl:{ResultType A *(^)(int)}{TypedText block1} (34)
+// CHECK-BLOCK-RECEIVER-NEXT: ParmDecl:{ResultType id (^)(int)}{TypedText block3} (34)
 
 // Test code completion with a missing opening bracket:
 // RUN: c-index-test -code-completion-at=%s:135:5 %s | FileCheck -check-prefix=CHECK-CCI %s
@@ -299,3 +331,6 @@ void test_missing_open_more() {
 // RUN: c-index-test -code-completion-at=%s:141:30 %s | FileCheck -check-prefix=CHECK-CCE %s
 
 // RUN: c-index-test -code-completion-at=%s:175:12 %s | FileCheck -check-prefix=CHECK-CLASS-RESULT %s
+
+// RUN: c-index-test -code-completion-at=%s:189:6 %s | FileCheck -check-prefix=CHECK-DISTRIB-OBJECTS %s
+// CHECK-DISTRIB-OBJECTS: ObjCInstanceMethodDecl:{ResultType void}{TypedText method:}{Placeholder (in bycopy A *)}{HorizontalSpace  }{TypedText result:}{Placeholder (out byref A **)} (35)

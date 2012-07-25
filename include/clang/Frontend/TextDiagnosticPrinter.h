@@ -16,27 +16,28 @@
 #define LLVM_CLANG_FRONTEND_TEXT_DIAGNOSTIC_PRINTER_H_
 
 #include "clang/Basic/Diagnostic.h"
-#include "clang/Basic/SourceLocation.h"
+#include "clang/Basic/LLVM.h"
+#include "llvm/ADT/OwningPtr.h"
 
 namespace clang {
 class DiagnosticOptions;
 class LangOptions;
+class TextDiagnostic;
 
-class TextDiagnosticPrinter : public DiagnosticClient {
-  llvm::raw_ostream &OS;
-  const LangOptions *LangOpts;
+class TextDiagnosticPrinter : public DiagnosticConsumer {
+  raw_ostream &OS;
   const DiagnosticOptions *DiagOpts;
 
-  SourceLocation LastWarningLoc;
-  FullSourceLoc LastLoc;
-  unsigned LastCaretDiagnosticWasNote : 1;
-  unsigned OwnsOutputStream : 1;
+  /// \brief Handle to the currently active text diagnostic emitter.
+  OwningPtr<TextDiagnostic> TextDiag;
 
   /// A string to prefix to error messages.
   std::string Prefix;
 
+  unsigned OwnsOutputStream : 1;
+
 public:
-  TextDiagnosticPrinter(llvm::raw_ostream &os, const DiagnosticOptions &diags,
+  TextDiagnosticPrinter(raw_ostream &os, const DiagnosticOptions &diags,
                         bool OwnsOutputStream = false);
   virtual ~TextDiagnosticPrinter();
 
@@ -45,34 +46,10 @@ public:
   /// used.
   void setPrefix(std::string Value) { Prefix = Value; }
 
-  void BeginSourceFile(const LangOptions &LO, const Preprocessor *PP) {
-    LangOpts = &LO;
-  }
-
-  void EndSourceFile() {
-    LangOpts = 0;
-  }
-
-  void PrintIncludeStack(SourceLocation Loc, const SourceManager &SM);
-
-  void HighlightRange(const CharSourceRange &R,
-                      const SourceManager &SrcMgr,
-                      unsigned LineNo, FileID FID,
-                      std::string &CaretLine,
-                      const std::string &SourceLine);
-
-  void EmitCaretDiagnostic(SourceLocation Loc,
-                           CharSourceRange *Ranges, unsigned NumRanges,
-                           const SourceManager &SM,
-                           const FixItHint *Hints,
-                           unsigned NumHints,
-                           unsigned Columns,  
-                           unsigned OnMacroInst,
-                           unsigned MacroSkipStart,
-                           unsigned MacroSkipEnd);
-
-  virtual void HandleDiagnostic(Diagnostic::Level DiagLevel,
-                                const DiagnosticInfo &Info);
+  void BeginSourceFile(const LangOptions &LO, const Preprocessor *PP);
+  void EndSourceFile();
+  void HandleDiagnostic(DiagnosticsEngine::Level Level, const Diagnostic &Info);
+  DiagnosticConsumer *clone(DiagnosticsEngine &Diags) const;
 };
 
 } // end namespace clang

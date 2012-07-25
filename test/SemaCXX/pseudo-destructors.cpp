@@ -2,7 +2,7 @@
 struct A {};
 
 enum Foo { F };
-typedef Foo Bar;
+typedef Foo Bar; // expected-note{{type 'Bar' (aka 'Foo') is declared here}}
 
 typedef int Integer;
 typedef double Double;
@@ -19,14 +19,13 @@ void cv_test(const volatile T* cvt) {
   cvt->T::~T(); // no-warning
 }
 
-void f(A* a, Foo *f, int *i, double *d) {
+void f(A* a, Foo *f, int *i, double *d, int ii) {
   a->~A();
   a->A::~A();
   
-  a->~foo(); // expected-error{{identifier 'foo' in pseudo-destructor expression does not name a type}}
+  a->~foo(); // expected-error{{identifier 'foo' in object destruction expression does not name a type}}
   
-  // FIXME: the diagnostic below isn't wonderful
-  a->~Bar(); // expected-error{{does not name a type}}
+  a->~Bar(); // expected-error{{destructor type 'Bar' (aka 'Foo') in object destruction expression does not match the type 'A' of the object being destroyed}}
   
   f->~Bar();
   f->~Foo();
@@ -46,6 +45,9 @@ void f(A* a, Foo *f, int *i, double *d) {
   i->N::OtherInteger::~Integer(); // expected-error{{'Integer' does not refer to a type name in pseudo-destructor expression; expected the name of type 'int'}}
   i->N::~Integer(); // expected-error{{'Integer' does not refer to a type name in pseudo-destructor expression; expected the name of type 'int'}}
   i->Integer::~Double(); // expected-error{{the type of object expression ('int') does not match the type being destroyed ('Double' (aka 'double')) in pseudo-destructor expression}}
+
+  ii->~Integer(); // expected-error{{member reference type 'int' is not a pointer; maybe you meant to use '.'?}}
+  ii.~Integer();
 
   cv_test(a);
   cv_test(f);
@@ -69,3 +71,12 @@ void test_X0(N1::X0 &x0) {
   x0.~X0();
 }
 
+namespace PR11339 {
+  template<class T>
+  void destroy(T* p) {
+    p->~T(); // ok
+    p->~oops(); // expected-error{{expected the class name after '~' to name a destructor}}
+  }
+
+  template void destroy(int*); // expected-note{{in instantiation of function template specialization}}
+}

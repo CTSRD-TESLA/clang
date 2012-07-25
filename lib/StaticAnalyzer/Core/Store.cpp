@@ -12,19 +12,48 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/StaticAnalyzer/Core/PathSensitive/Store.h"
-#include "clang/StaticAnalyzer/Core/PathSensitive/GRState.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/Calls.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/ProgramState.h"
 #include "clang/AST/CharUnits.h"
+#include "clang/AST/DeclObjC.h"
 
 using namespace clang;
 using namespace ento;
 
-StoreManager::StoreManager(GRStateManager &stateMgr)
+StoreManager::StoreManager(ProgramStateManager &stateMgr)
   : svalBuilder(stateMgr.getSValBuilder()), StateMgr(stateMgr),
     MRMgr(svalBuilder.getRegionManager()), Ctx(stateMgr.getContext()) {}
 
-StoreRef StoreManager::enterStackFrame(const GRState *state,
-                                       const StackFrameContext *frame) {
-  return StoreRef(state->getStore(), *this);
+StoreRef StoreManager::enterStackFrame(Store OldStore,
+                                       const CallEvent &Call,
+                                       const StackFrameContext *LCtx) {
+  StoreRef Store = StoreRef(OldStore, *this);
+
+  unsigned Idx = 0;
+  for (CallEvent::param_iterator I = Call.param_begin(/*UseDefinition=*/true),
+                                 E = Call.param_end(/*UseDefinition=*/true);
+       I != E; ++I, ++Idx) {
+    const ParmVarDecl *Decl = *I;
+    assert(Decl && "Formal parameter has no decl?");
+
+    SVal ArgVal = Call.getArgSVal(Idx);
+    if (!ArgVal.isUnknown()) {
+      Store = Bind(Store.getStore(),
+                   svalBuilder.makeLoc(MRMgr.getVarRegion(Decl, LCtx)),
+                   ArgVal);
+    }
+  }
+
+  // FIXME: We will eventually want to generalize this to handle other non-
+  // parameter arguments besides 'this' (such as 'self' for ObjC methods).
+  SVal ThisVal = Call.getCXXThisVal();
+  if (isa<DefinedSVal>(ThisVal)) {
+    const CXXMethodDecl *MD = cast<CXXMethodDecl>(Call.getDecl());
+    loc::MemRegionVal ThisRegion = svalBuilder.getCXXThis(MD, LCtx);
+    Store = Bind(Store.getStore(), ThisRegion, ThisVal);
+  }
+
+  return Store;
 }
 
 const MemRegion *StoreManager::MakeElementRegion(const MemRegion *Base,
@@ -57,7 +86,7 @@ const ElementRegion *StoreManager::GetElementZeroRegion(const MemRegion *R,
 
 const MemRegion *StoreManager::castRegion(const MemRegion *R, QualType CastToTy) {
 
-  ASTContext& Ctx = StateMgr.getContext();
+  ASTContext &Ctx = StateMgr.getContext();
 
   // Handle casts to Objective-C objects.
   if (CastToTy->isObjCObjectPointerType())
@@ -87,7 +116,7 @@ const MemRegion *StoreManager::castRegion(const MemRegion *R, QualType CastToTy)
 
   // Handle casts from compatible types.
   if (R->isBoundable())
-    if (const TypedRegion *TR = dyn_cast<TypedRegion>(R)) {
+    if (const TypedValueRegion *TR = dyn_cast<TypedValueRegion>(R)) {
       QualType ObjTy = Ctx.getCanonicalType(TR->getValueType());
       if (CanonPointeeTy == ObjTy)
         return R;
@@ -101,10 +130,11 @@ const MemRegion *StoreManager::castRegion(const MemRegion *R, QualType CastToTy)
     case MemRegion::StackArgumentsSpaceRegionKind:
     case MemRegion::HeapSpaceRegionKind:
     case MemRegion::UnknownSpaceRegionKind:
-    case MemRegion::NonStaticGlobalSpaceRegionKind:
-    case MemRegion::StaticGlobalSpaceRegionKind: {
-      assert(0 && "Invalid region cast");
-      break;
+    case MemRegion::StaticGlobalSpaceRegionKind:
+    case MemRegion::GlobalInternalSpaceRegionKind:
+    case MemRegion::GlobalSystemSpaceRegionKind:
+    case MemRegion::GlobalImmutableSpaceRegionKind: {
+      llvm_unreachable("Invalid region cast");
     }
 
     case MemRegion::FunctionTextRegionKind:
@@ -117,6 +147,7 @@ const MemRegion *StoreManager::castRegion(const MemRegion *R, QualType CastToTy)
     case MemRegion::CompoundLiteralRegionKind:
     case MemRegion::FieldRegionKind:
     case MemRegion::ObjCIvarRegionKind:
+    case MemRegion::ObjCStringRegionKind:
     case MemRegion::VarRegionKind:
     case MemRegion::CXXTempObjectRegionKind:
     case MemRegion::CXXBaseObjectRegionKind:
@@ -157,7 +188,7 @@ const MemRegion *StoreManager::castRegion(const MemRegion *R, QualType CastToTy)
         // Edge case: we are at 0 bytes off the beginning of baseR.  We
         // check to see if type we are casting to is the same as the base
         // region.  If so, just return the base region.
-        if (const TypedRegion *TR = dyn_cast<TypedRegion>(baseR)) {
+        if (const TypedValueRegion *TR = dyn_cast<TypedValueRegion>(baseR)) {
           QualType ObjTy = Ctx.getCanonicalType(TR->getValueType());
           QualType CanonPointeeTy = Ctx.getCanonicalType(PointeeTy);
           if (CanonPointeeTy == ObjTy)
@@ -203,18 +234,17 @@ const MemRegion *StoreManager::castRegion(const MemRegion *R, QualType CastToTy)
     }
   }
 
-  assert(0 && "unreachable");
-  return 0;
+  llvm_unreachable("unreachable");
 }
 
 
 /// CastRetrievedVal - Used by subclasses of StoreManager to implement
 ///  implicit casts that arise from loads from regions that are reinterpreted
 ///  as another region.
-SVal StoreManager::CastRetrievedVal(SVal V, const TypedRegion *R,
+SVal StoreManager::CastRetrievedVal(SVal V, const TypedValueRegion *R,
                                     QualType castTy, bool performTestOnly) {
   
-  if (castTy.isNull())
+  if (castTy.isNull() || V.isUnknownOrUndef())
     return V;
   
   ASTContext &Ctx = svalBuilder.getContext();
@@ -229,15 +259,10 @@ SVal StoreManager::CastRetrievedVal(SVal V, const TypedRegion *R,
     return V;
   }
   
-  if (const Loc *L = dyn_cast<Loc>(&V))
-    return svalBuilder.evalCastFromLoc(*L, castTy);
-  else if (const NonLoc *NL = dyn_cast<NonLoc>(&V))
-    return svalBuilder.evalCastFromNonLoc(*NL, castTy);
-  
-  return V;
+  return svalBuilder.dispatchCast(V, castTy);
 }
 
-SVal StoreManager::getLValueFieldOrIvar(const Decl* D, SVal Base) {
+SVal StoreManager::getLValueFieldOrIvar(const Decl *D, SVal Base) {
   if (Base.isUnknownOrUndef())
     return Base;
 
@@ -261,8 +286,7 @@ SVal StoreManager::getLValueFieldOrIvar(const Decl* D, SVal Base) {
     return Base;
 
   default:
-    assert(0 && "Unhandled Base.");
-    return Base;
+    llvm_unreachable("Unhandled Base.");
   }
 
   // NOTE: We must have this check first because ObjCIvarDecl is a subclass
@@ -271,6 +295,10 @@ SVal StoreManager::getLValueFieldOrIvar(const Decl* D, SVal Base) {
     return loc::MemRegionVal(MRMgr.getObjCIvarRegion(ID, BaseR));
 
   return loc::MemRegionVal(MRMgr.getFieldRegion(cast<FieldDecl>(D), BaseR));
+}
+
+SVal StoreManager::getLValueIvar(const ObjCIvarDecl *decl, SVal base) {
+  return getLValueFieldOrIvar(decl, base);
 }
 
 SVal StoreManager::getLValueElement(QualType elementType, NonLoc Offset, 
@@ -336,3 +364,26 @@ SVal StoreManager::getLValueElement(QualType elementType, NonLoc Offset,
   return loc::MemRegionVal(MRMgr.getElementRegion(elementType, NewIdx, ArrayR,
                                                   Ctx));
 }
+
+StoreManager::BindingsHandler::~BindingsHandler() {}
+
+bool StoreManager::FindUniqueBinding::HandleBinding(StoreManager& SMgr,
+                                                    Store store,
+                                                    const MemRegion* R,
+                                                    SVal val) {
+  SymbolRef SymV = val.getAsLocSymbol();
+  if (!SymV || SymV != Sym)
+    return true;
+
+  if (Binding) {
+    First = false;
+    return false;
+  }
+  else
+    Binding = R;
+
+  return true;
+}
+
+void SubRegionMap::anchor() { }
+void SubRegionMap::Visitor::anchor() { }

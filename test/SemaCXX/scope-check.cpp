@@ -1,4 +1,5 @@
 // RUN: %clang_cc1 -fsyntax-only -verify -fblocks %s -Wno-unreachable-code
+// RUN: %clang_cc1 -fsyntax-only -verify -fblocks -std=gnu++11 %s -Wno-unreachable-code
 
 namespace test0 {
   struct D { ~D(); };
@@ -19,7 +20,7 @@ namespace test1 {
 
   int f(bool b) {
     if (b)
-      goto foo; // expected-error {{illegal goto into protected scope}}
+      goto foo; // expected-error {{goto into protected scope}}
     C c; // expected-note {{jump bypasses variable initialization}}
   foo:
     return 1;
@@ -151,3 +152,58 @@ namespace test8 {
   l2: x++;
   }
 }
+
+namespace test9 {
+  struct S { int i; };
+  void test1() {
+    goto foo;
+    S s;
+  foo:
+    return;
+  }
+  unsigned test2(unsigned x, unsigned y) {
+    switch (x) {
+    case 2:
+      S s;
+      if (y > 42) return x + y;
+    default:
+      return x - 2;
+    }
+  }
+}
+
+// http://llvm.org/PR10462
+namespace PR10462 {
+enum MyEnum {
+  something_valid,
+  something_invalid
+};
+
+bool recurse() {
+  MyEnum K;
+  switch (K) { // expected-warning {{enumeration value 'something_invalid' not handled in switch}}
+    case something_valid:
+    case what_am_i_thinking: // expected-error {{use of undeclared identifier}}
+      int *X = 0;
+      if (recurse()) {
+      }
+
+      break;
+  }
+}
+
+
+namespace test10 {
+
+int test() {
+  static void *ps[] = { &&a0 };
+  goto *&&a0; // expected-error {{goto into protected scope}}
+  int a = 3; // expected-note {{jump bypasses variable initialization}}
+ a0:
+  return 0;
+}
+
+}
+
+}
+

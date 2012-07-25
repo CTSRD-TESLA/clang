@@ -1,4 +1,3 @@
-// RUN: %clang_cc1 -analyze -analyzer-checker=core -analyzer-store=basic -fblocks -verify %s
 // RUN: %clang_cc1 -analyze -analyzer-checker=core -analyzer-store=region -fblocks -verify %s
 
 int* f1() {
@@ -58,8 +57,15 @@ int struct_test(struct baz byVal, int flag) {
 
 typedef int (^ComparatorBlock)(int a, int b);
 ComparatorBlock test_return_block(void) {
+  // This block is a global since it has no captures.
   ComparatorBlock b = ^int(int a, int b){ return a > b; };
-  return b; // expected-warning{{Address of stack-allocated block declared on line 61 returned to caller}}
+  return b; // no-warning
+}
+
+ComparatorBlock test_return_block_with_capture(int x) {
+  // This block is stack allocated because it has captures.
+  ComparatorBlock b = ^int(int a, int b){ return a > b + x; };
+  return b; // expected-warning{{Address of stack-allocated block}}
 }
 
 ComparatorBlock test_return_block_neg_aux(void);
@@ -74,4 +80,13 @@ int *rdar_7523821_f2() {
   return a; // expected-warning 2 {{ddress of stack memory associated with local variable 'a' returned}}
 };
 
+// Handle blocks that have no captures or are otherwise declared 'static'.
+// <rdar://problem/10348049>
+typedef int (^RDar10348049)(int value);
+RDar10348049 test_rdar10348049(void) {
+  static RDar10348049 b = ^int(int x) {
+    return x + 2;
+  };
+  return b; // no-warning
+}
 

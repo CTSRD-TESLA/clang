@@ -29,13 +29,13 @@ int main(int argc, char* argv[])
         return 0;
 }
 
-// CHECK: c"\03\00b\00a\00r\00\00\00"
-// CHECK: c"\04\00g\00o\00r\00f\00\00\00"
+// CHECK: [i16 3, i16 98, i16 97, i16 114, i16 0]
+// CHECK: [i16 4, i16 103, i16 111, i16 114, i16 102, i16 0]
 
 
 // PR8856 - -fshort-wchar makes wchar_t be unsigned.
 // CHECK: @test2
-// CHECK: volatile store i32 1, i32* %isUnsigned
+// CHECK: store volatile i32 1, i32* %isUnsigned
 void test2() {
   volatile int isUnsigned = (wchar_t)-1 > (wchar_t)0;
 }

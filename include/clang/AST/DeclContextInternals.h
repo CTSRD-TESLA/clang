@@ -17,8 +17,8 @@
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclarationName.h"
 #include "clang/AST/DeclCXX.h"
-#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/PointerUnion.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include <algorithm>
 
@@ -31,7 +31,7 @@ class DependentDiagnostic;
 struct StoredDeclsList {
 
   /// DeclsTy - When in vector form, this is what the Data pointer points to.
-  typedef llvm::SmallVector<NamedDecl *, 4> DeclsTy;
+  typedef SmallVector<NamedDecl *, 4> DeclsTy;
 
   /// \brief The stored data, which will be either a pointer to a NamedDecl,
   /// or a pointer to a vector.
@@ -196,7 +196,7 @@ public:
 };
 
 class StoredDeclsMap
-  : public llvm::DenseMap<DeclarationName, StoredDeclsList> {
+  : public llvm::SmallDenseMap<DeclarationName, StoredDeclsList, 4> {
 
 public:
   static void DestroyAll(StoredDeclsMap *Map, bool Dependent);

@@ -9,12 +9,12 @@ Class test1(Class X) {
 // rdar://6079877
 void test2() {
   id str = @"foo" 
-          "bar\0"    // expected-warning {{literal contains NUL character}}
+          "bar\0"    // no-warning
           @"baz"  " blarg";
   id str2 = @"foo" 
             "bar"
            @"baz"
-           " b\0larg";  // expected-warning {{literal contains NUL character}}
+           " b\0larg";  // no-warning
 
   
   if (@encode(int) == "foo") { }  // expected-warning {{result of comparison against @encode is unspecified}}
@@ -31,4 +31,14 @@ static Object *g;
 void test3(Object *o) {
   // this is ok.
   __sync_bool_compare_and_swap(&g, 0, o);
+}
+
+@class Incomplete_ObjC_class; // expected-note{{forward declaration of class here}}
+struct Incomplete_struct; // expected-note {{forward declaration}}
+
+void test_encode() {
+  (void)@encode(Incomplete_ObjC_class); // expected-error {{incomplete type}}
+  (void)@encode(struct Incomplete_struct); // expected-error {{incomplete type}}
+  (void)@encode(Incomplete_ObjC_class*);
+  (void)@encode(id);
 }

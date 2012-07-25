@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify -std=c++0x %s
+// RUN: %clang_cc1 -fsyntax-only -verify -std=c++11 -fcxx-exceptions %s
 
 int i = delete; // expected-error {{only functions can have deleted definitions}}
 
@@ -7,9 +7,8 @@ void fn() = delete; // expected-note {{candidate function has been explicitly de
 void fn2(); // expected-note {{previous declaration is here}}
 void fn2() = delete; // expected-error {{deleted definition must be first declaration}}
 
-void fn3() = delete;
-void fn3() {
-  // FIXME: This definition should be invalid.
+void fn3() = delete; // expected-note {{previous definition is here}}
+void fn3() { // expected-error {{redefinition}}
 }
 
 void ov(int) {} // expected-note {{candidate function}}
@@ -34,3 +33,35 @@ void test() {
   d->fn(); // expected-error {{attempt to use a deleted function}}
   int i = *d; // expected-error {{invokes a deleted function}}
 }
+
+struct DelDtor {
+  ~DelDtor() = delete; // expected-note 9{{here}}
+};
+void f() {
+  DelDtor *p = new DelDtor[3]; // expected-error {{attempt to use a deleted function}}
+  delete [] p; // expected-error {{attempt to use a deleted function}}
+  const DelDtor &dd2 = DelDtor(); // expected-error {{attempt to use a deleted function}}
+  DelDtor dd; // expected-error {{attempt to use a deleted function}}
+  throw dd; // expected-error {{attempt to use a deleted function}}
+}
+struct X : DelDtor {
+  ~X() {} // expected-error {{attempt to use a deleted function}}
+};
+struct Y {
+  DelDtor dd;
+  ~Y() {} // expected-error {{attempt to use a deleted function}}
+};
+struct Z : virtual DelDtor {
+  ~Z() {} // expected-error {{attempt to use a deleted function}}
+};
+DelDtor dd; // expected-error {{attempt to use a deleted function}}
+
+template<typename> void test2() = delete;
+template void test2<int>();
+
+template<typename> void test3() = delete;
+template<typename> void test3();
+template void test3<int>();
+
+void test4() {} // expected-note {{previous definition is here}}
+void test4() = delete; // expected-error {{redefinition of 'test4'}}

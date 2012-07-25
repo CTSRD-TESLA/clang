@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify -std=c++0x %s
+// RUN: %clang_cc1 -fsyntax-only -verify -std=c++11 %s
 
 struct Base {
   virtual void override();
@@ -7,9 +7,6 @@ struct Base {
 struct S : Base {
   virtual void final() final;
   virtual void override() override;
-  virtual void n() new;
-  int i : 3 new;
-  int j new;
 };
 
 struct T {

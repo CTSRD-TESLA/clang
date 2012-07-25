@@ -194,7 +194,7 @@ template struct IndirectGoto0<int>; // expected-note{{instantiation}}
 template<typename T> struct TryCatch0 {
   void f() {
     try {
-    } catch (T t) { // expected-warning{{incomplete type}} \
+    } catch (T t) { // expected-error{{incomplete type}} \
                     // expected-error{{abstract class}}
     } catch (...) {
     }
@@ -224,4 +224,26 @@ namespace test0 {
 namespace PR7016 {
   template<typename T> void f() { T x = x; }
   template void f<int>();
+}
+
+namespace PR9880 {
+  struct lua_State;
+  struct no_tag { char a; };			// (A)
+  struct yes_tag { long a; long b; };	// (A)
+
+  template <typename T>
+  struct HasIndexMetamethod {
+    template <typename U>
+    static no_tag check(...);
+    template <typename U>
+    static yes_tag check(char[sizeof(&U::luaIndex)]);
+    enum { value = sizeof(check<T>(0)) == sizeof(yes_tag) };
+  };
+  
+  class SomeClass {
+  public:
+    int luaIndex(lua_State* L);
+  };
+  
+  int i = HasIndexMetamethod<SomeClass>::value;
 }

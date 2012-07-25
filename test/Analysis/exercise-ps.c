@@ -1,5 +1,4 @@
-// RUN: %clang_cc1 -analyze -analyzer-checker=core,core.experimental -analyzer-store=basic -verify %s
-// RUN: %clang_cc1 -analyze -analyzer-checker=core,core.experimental -analyzer-store=region -verify %s
+// RUN: %clang_cc1 -analyze -analyzer-checker=core,experimental.core -analyzer-store=region -verify %s
 //
 // Just exercise the analyzer on code that has at one point caused issues
 // (i.e., no assertions or crashes).
@@ -19,6 +18,6 @@ void_typedef f2_helper();
 static void f2(void *buf) {
   F12_typedef* x;
   x = f2_helper();
-  memcpy((&x[1]), (buf), 1); // expected-warning{{implicitly declaring C library function 'memcpy' with type 'void *(void *, const void *}} \
+  memcpy((&x[1]), (buf), 1); // expected-warning{{implicitly declaring library function 'memcpy' with type 'void *(void *, const void *}} \
   // expected-note{{please include the header <string.h> or explicitly provide a declaration for 'memcpy'}}
 }

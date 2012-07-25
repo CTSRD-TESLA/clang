@@ -1,4 +1,5 @@
-// RUN: %clang_cc1 -fsyntax-only -verify %s -std=c++0x
+// RUN: %clang_cc1 -fsyntax-only -verify %s -std=c++11
+// RUN: %clang_cc1 -fsyntax-only -verify %s -std=c++98 -Wno-c++11-extensions
 
 template<typename T>
 struct only {
@@ -54,8 +55,7 @@ void f() {
 
   auto *fail1 = 0; // expected-error {{variable 'fail1' with type 'auto *' has incompatible initializer of type 'int'}}
   int **p;
-  // FIXME: due to PR9233, we get the wrong diagnostic here.
-  const auto **fail2(p); // desired-error {{variable 'fail2' with type 'auto const **' has incompatible initializer of type 'int **'}} expected-error {{cannot initialize}}
+  const auto **fail2(p); // expected-error {{variable 'fail2' with type 'auto const **' has incompatible initializer of type 'int **'}}
 }
 
 struct S {
@@ -83,4 +83,22 @@ struct S {
   }
 };
 
-// TODO: if the initializer is a braced-init-list, deduce auto as std::initializer_list<T>.
+namespace PR10939 {
+  struct X {
+    int method(int);
+    int method(float); 
+  };
+
+  template<typename T> T g(T);
+
+  void f(X *x) {
+    auto value = x->method; // expected-error {{reference to non-static member function must be called}}
+    if (value) { }
+
+    auto funcptr = &g<int>;
+    int (*funcptr2)(int) = funcptr;
+  }
+}
+
+// if the initializer is a braced-init-list, deduce auto as std::initializer_list<T>:
+// see SemaCXX/cxx0x-initializer-stdinitializerlist.cpp

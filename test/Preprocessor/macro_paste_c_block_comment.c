@@ -1,7 +1,9 @@
-// RUN: %clang_cc1 %s -Eonly 2>&1 | grep error
-// RUN: %clang_cc1 %s -Eonly 2>&1 | not grep unterminated
-// RUN: %clang_cc1 %s -Eonly 2>&1 | not grep scratch
+// RUN: %clang_cc1 %s -Eonly -verify
 
+// expected-error@9 {{EOF}}
 #define COMM / ## *
-COMM
+COMM // expected-error {{pasting formed '/*', an invalid preprocessing token}}
 
+// Demonstrate that an invalid preprocessing token
+// doesn't swallow the rest of the file...
+#error EOF

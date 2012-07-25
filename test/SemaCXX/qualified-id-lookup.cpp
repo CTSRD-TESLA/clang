@@ -86,14 +86,15 @@ namespace a {
 namespace a {  
   namespace a {   // A1
     namespace a { // A2
-      int i;
+      int i; // expected-note{{'::a::a::a::i' declared here}}
     }
   }
 }
 
 void test_a() {
-  a::a::i = 3; // expected-error{{no member named 'i'}}
+  a::a::i = 3; // expected-error{{no member named 'i' in namespace 'a::a'; did you mean '::a::a::a::i'?}}
   a::a::a::i = 4;
+  a::a::j = 3; // expected-error-re{{no member named 'j' in namespace 'a::a'$}}
 }
   
 struct Undef { // expected-note{{definition of 'Undef' is not complete until the closing '}'}}
@@ -146,3 +147,8 @@ namespace PR6830 {
     Z(foo::X()).Work();
   }
 }
+
+namespace pr12339 {
+  extern "C" void i;
+  pr12339::FOO  // expected-error{{no type named 'FOO' in namespace 'pr12339'}}
+}  // expected-error{{expected unqualified-id}}

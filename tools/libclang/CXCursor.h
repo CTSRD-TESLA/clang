@@ -31,7 +31,7 @@ class FieldDecl;
 class InclusionDirective;
 class LabelStmt;
 class MacroDefinition;
-class MacroInstantiation;
+class MacroExpansion;
 class NamedDecl;
 class ObjCInterfaceDecl;
 class ObjCProtocolDecl;
@@ -41,16 +41,21 @@ class Stmt;
 class TemplateDecl;
 class TemplateName;
 class TypeDecl;
+class VarDecl;
   
 namespace cxcursor {
+
+CXCursor getCursor(CXTranslationUnit, SourceLocation);
   
 CXCursor MakeCXCursor(const clang::Attr *A, clang::Decl *Parent,
                       CXTranslationUnit TU);
 CXCursor MakeCXCursor(clang::Decl *D, CXTranslationUnit TU,
+                      SourceRange RegionOfInterest = SourceRange(),
                       bool FirstInDeclGroup = true);
 CXCursor MakeCXCursor(clang::Stmt *S, clang::Decl *Parent,
-                      CXTranslationUnit TU);
-CXCursor MakeCXCursorInvalid(CXCursorKind K);
+                      CXTranslationUnit TU,
+                      SourceRange RegionOfInterest = SourceRange());
+CXCursor MakeCXCursorInvalid(CXCursorKind K, CXTranslationUnit TU = 0);
 
 /// \brief Create an Objective-C superclass reference at the given location.
 CXCursor MakeCursorObjCSuperClassRef(ObjCInterfaceDecl *Super, 
@@ -63,7 +68,8 @@ std::pair<ObjCInterfaceDecl *, SourceLocation>
   getCursorObjCSuperClassRef(CXCursor C);
 
 /// \brief Create an Objective-C protocol reference at the given location.
-CXCursor MakeCursorObjCProtocolRef(ObjCProtocolDecl *Proto, SourceLocation Loc, 
+CXCursor MakeCursorObjCProtocolRef(const ObjCProtocolDecl *Proto,
+                                   SourceLocation Loc, 
                                    CXTranslationUnit TU);
 
 /// \brief Unpack an ObjCProtocolRef cursor into the protocol it references
@@ -72,7 +78,8 @@ std::pair<ObjCProtocolDecl *, SourceLocation>
   getCursorObjCProtocolRef(CXCursor C);
 
 /// \brief Create an Objective-C class reference at the given location.
-CXCursor MakeCursorObjCClassRef(ObjCInterfaceDecl *Class, SourceLocation Loc, 
+CXCursor MakeCursorObjCClassRef(const ObjCInterfaceDecl *Class,
+                                SourceLocation Loc, 
                                 CXTranslationUnit TU);
 
 /// \brief Unpack an ObjCClassRef cursor into the class it references
@@ -81,7 +88,7 @@ std::pair<ObjCInterfaceDecl *, SourceLocation>
   getCursorObjCClassRef(CXCursor C);
 
 /// \brief Create a type reference at the given location.
-CXCursor MakeCursorTypeRef(TypeDecl *Type, SourceLocation Loc,
+CXCursor MakeCursorTypeRef(const TypeDecl *Type, SourceLocation Loc,
                            CXTranslationUnit TU);
                                
 /// \brief Unpack a TypeRef cursor into the class it references
@@ -89,7 +96,7 @@ CXCursor MakeCursorTypeRef(TypeDecl *Type, SourceLocation Loc,
 std::pair<TypeDecl *, SourceLocation> getCursorTypeRef(CXCursor C);
 
 /// \brief Create a reference to a template at the given location.
-CXCursor MakeCursorTemplateRef(TemplateDecl *Template, SourceLocation Loc,
+CXCursor MakeCursorTemplateRef(const TemplateDecl *Template, SourceLocation Loc,
                                CXTranslationUnit TU);
 
 /// \brief Unpack a TemplateRef cursor into the template it references and
@@ -98,15 +105,23 @@ std::pair<TemplateDecl *, SourceLocation> getCursorTemplateRef(CXCursor C);
 
 /// \brief Create a reference to a namespace or namespace alias at the given 
 /// location.
-CXCursor MakeCursorNamespaceRef(NamedDecl *NS, SourceLocation Loc,
+CXCursor MakeCursorNamespaceRef(const NamedDecl *NS, SourceLocation Loc,
                                 CXTranslationUnit TU);
 
 /// \brief Unpack a NamespaceRef cursor into the namespace or namespace alias
 /// it references and the location where the reference occurred.
 std::pair<NamedDecl *, SourceLocation> getCursorNamespaceRef(CXCursor C);
 
+/// \brief Create a reference to a variable at the given location.
+CXCursor MakeCursorVariableRef(const VarDecl *Var, SourceLocation Loc, 
+                               CXTranslationUnit TU);
+
+/// \brief Unpack a VariableRef cursor into the variable it references and the
+/// location where the where the reference occurred.
+std::pair<VarDecl *, SourceLocation> getCursorVariableRef(CXCursor C); 
+
 /// \brief Create a reference to a field at the given location.
-CXCursor MakeCursorMemberRef(FieldDecl *Field, SourceLocation Loc, 
+CXCursor MakeCursorMemberRef(const FieldDecl *Field, SourceLocation Loc, 
                              CXTranslationUnit TU);
   
 /// \brief Unpack a MemberRef cursor into the field it references and the 
@@ -114,7 +129,7 @@ CXCursor MakeCursorMemberRef(FieldDecl *Field, SourceLocation Loc,
 std::pair<FieldDecl *, SourceLocation> getCursorMemberRef(CXCursor C);
 
 /// \brief Create a CXX base specifier cursor.
-CXCursor MakeCursorCXXBaseSpecifier(CXXBaseSpecifier *B,
+CXCursor MakeCursorCXXBaseSpecifier(const CXXBaseSpecifier *B,
                                     CXTranslationUnit TU);
 
 /// \brief Unpack a CXXBaseSpecifier cursor into a CXXBaseSpecifier.
@@ -134,13 +149,13 @@ CXCursor MakeMacroDefinitionCursor(MacroDefinition *, CXTranslationUnit TU);
 /// source range.
 MacroDefinition *getCursorMacroDefinition(CXCursor C);
 
-/// \brief Create a macro instantiation cursor.
-CXCursor MakeMacroInstantiationCursor(MacroInstantiation *,
-                                      CXTranslationUnit TU);
+/// \brief Create a macro expansion cursor.
+CXCursor MakeMacroExpansionCursor(MacroExpansion *,
+                                  CXTranslationUnit TU);
 
-/// \brief Unpack a given macro instantiation cursor to retrieve its
+/// \brief Unpack a given macro expansion cursor to retrieve its
 /// source range.
-MacroInstantiation *getCursorMacroInstantiation(CXCursor C);
+MacroExpansion *getCursorMacroExpansion(CXCursor C);
 
 /// \brief Create an inclusion directive cursor.
 CXCursor MakeInclusionDirectiveCursor(InclusionDirective *,
@@ -184,11 +199,48 @@ Decl *getCursorDecl(CXCursor Cursor);
 Expr *getCursorExpr(CXCursor Cursor);
 Stmt *getCursorStmt(CXCursor Cursor);
 Attr *getCursorAttr(CXCursor Cursor);
+Decl *getCursorParentDecl(CXCursor Cursor);
 
 ASTContext &getCursorContext(CXCursor Cursor);
 ASTUnit *getCursorASTUnit(CXCursor Cursor);
 CXTranslationUnit getCursorTU(CXCursor Cursor);
+
+void getOverriddenCursors(CXCursor cursor,
+                          SmallVectorImpl<CXCursor> &overridden);
   
+/// \brief Create an opaque  pool used for fast generation of overriden
+/// CXCursor arrays.
+void *createOverridenCXCursorsPool();
+
+/// \brief Dispose of the overriden CXCursors pool.
+void disposeOverridenCXCursorsPool(void *pool);
+  
+/// \brief Returns a index/location pair for a selector identifier if the cursor
+/// points to one.
+std::pair<int, SourceLocation> getSelectorIdentifierIndexAndLoc(CXCursor);
+static inline int getSelectorIdentifierIndex(CXCursor cursor) {
+  return getSelectorIdentifierIndexAndLoc(cursor).first;
+}
+static inline SourceLocation getSelectorIdentifierLoc(CXCursor cursor) {
+  return getSelectorIdentifierIndexAndLoc(cursor).second;
+}
+
+CXCursor getSelectorIdentifierCursor(int SelIdx, CXCursor cursor);
+
+static inline CXCursor getTypeRefedCallExprCursor(CXCursor cursor) {
+  CXCursor newCursor = cursor;
+  if (cursor.kind == CXCursor_CallExpr)
+    newCursor.xdata = 1;
+  return newCursor;
+}
+
+CXCursor getTypeRefCursor(CXCursor cursor);
+
+/// \brief Generate a USR for \arg D and put it in \arg Buf.
+/// \returns true if no USR was computed or the result should be ignored,
+/// false otherwise.
+bool getDeclCursorUSR(const Decl *D, SmallVectorImpl<char> &Buf);
+
 bool operator==(CXCursor X, CXCursor Y);
   
 inline bool operator!=(CXCursor X, CXCursor Y) {

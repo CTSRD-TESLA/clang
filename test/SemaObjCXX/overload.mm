@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify %s
+// RUN: %clang_cc1 -fsyntax-only -verify -Wno-objc-root-class %s
 @interface Foo
 @end
 
@@ -51,13 +51,13 @@ void test0(A* a, B* b, id val) {
 }
 
 void test1(A* a) {
-  B* b = a; // expected-warning{{incompatible pointer types initializing 'A *' with an expression of type 'B *'}}
-  B *c; c = a; // expected-warning{{incompatible pointer types assigning to 'A *' from 'B *'}}
+  B* b = a; // expected-warning{{incompatible pointer types initializing 'B *' with an expression of type 'A *'}}
+  B *c; c = a; // expected-warning{{incompatible pointer types assigning to 'B *' from 'A *'}}
 }
 
 void test2(A** ap) {
-  B** bp = ap; // expected-warning{{incompatible pointer types initializing 'A **' with an expression of type 'B **'}}
-  bp = ap; // expected-warning{{incompatible pointer types assigning to 'A **' from 'B **'}}
+  B** bp = ap; // expected-warning{{incompatible pointer types initializing 'B **' with an expression of type 'A **'}}
+  bp = ap; // expected-warning{{incompatible pointer types assigning to 'B **' from 'A **'}}
 }
 
 // FIXME: we should either allow overloading here or give a better diagnostic
@@ -148,4 +148,32 @@ namespace rdar8734046 {
     f1(a);
     f2(a);
   }
+}
+
+namespace PR9735 {
+  int &f3(const A*);
+  float &f3(const void*);
+
+  void test_f(B* b, const B* bc) {
+    int &ir1 = f3(b);
+    int &ir2 = f3(bc);
+  }
+}
+
+@interface D : B
+@end
+
+namespace rdar9327203 {
+  int &f(void* const&, int);
+  float &f(void* const&, long);
+  
+  void g(id x) { 
+    int &fr = (f)(x, 0); 
+  }
+}
+
+namespace class_id {
+  // it's okay to overload Class with id.
+  void f(Class) { }
+  void f(id) { }
 }

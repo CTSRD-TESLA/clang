@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 %s -emit-llvm -o - -verify | FileCheck %s
+// RUN: %clang_cc1 %s -triple i386-unknown-unknown -emit-llvm -o - -verify | FileCheck %s
 
 int g();
 
@@ -24,7 +24,7 @@ void f0() {}
 
 void f1();
 void f2(void) {
-// CHECK: call void @f1()
+// CHECK: call void bitcast (void ()* @f1 to void (i32, i32, i32)*)(i32 1, i32 2, i32 3)
   f1(1, 2, 3);
 }
 // CHECK: define void @f1()
@@ -58,4 +58,10 @@ void f8_test() {
 // CHECK: call void @f8_user({{.*}}* bitcast (void ()* @f8_callback to {{.*}}*))
 // CHECK: declare void @f8_user({{.*}}*)
 // CHECK: declare void @f8_callback()
+}
+
+// PR10204: don't crash
+static void test9_helper(void) {}
+void test9() {
+  (void) test9_helper;
 }

@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fcxx-exceptions -fexceptions -std=c++0x -fblocks -fms-extensions -fsyntax-only -verify %s
+// RUN: %clang_cc1 -fcxx-exceptions -fexceptions -std=c++11 -fblocks -fms-extensions -fsyntax-only -verify %s
 
 template<typename T, typename U> struct pair;
 template<typename ...> struct tuple;
@@ -160,11 +160,11 @@ struct TestUnexpandedTTP {
 };
 
 // Test for unexpanded parameter packs in declarations.
-// FIXME: Attributes?
 template<typename T, typename... Types>
-struct TestUnexpandedDecls : T{
+// FIXME: this should test that the diagnostic reads "type contains..."
+struct alignas(Types) TestUnexpandedDecls : T{ // expected-error{{expression contains unexpanded parameter pack 'Types'}}
   void member_function(Types);  // expected-error{{declaration type contains unexpanded parameter pack 'Types'}}
-  void member_function () throw(Types); // expected-error{{declaration type contains unexpanded parameter pack 'Types'}}
+  void member_function () throw(Types); // expected-error{{exception type contains unexpanded parameter pack 'Types'}}
   operator Types() const; // expected-error{{declaration type contains unexpanded parameter pack 'Types'}}
   Types data_member;  // expected-error{{data member type contains unexpanded parameter pack 'Types'}}
   static Types static_data_member; // expected-error{{declaration type contains unexpanded parameter pack 'Types'}}
@@ -185,9 +185,15 @@ struct TestUnexpandedDecls : T{
 
   void test_initializers() {
     T copy_init = static_cast<Types>(0); // expected-error{{initializer contains unexpanded parameter pack 'Types'}}
-    T direct_init(0, static_cast<Types>(0)); // expected-error{{expression contains unexpanded parameter pack 'Types'}}
+    T direct_init(0, static_cast<Types>(0)); // expected-error{{initializer contains unexpanded parameter pack 'Types'}}
     T list_init = { static_cast<Types>(0) }; // expected-error{{initializer contains unexpanded parameter pack 'Types'}}
   }
+
+  T in_class_member_init = static_cast<Types>(0); // expected-error{{initializer contains unexpanded parameter pack 'Types'}}
+  TestUnexpandedDecls() : 
+    Types(static_cast<Types>(0)), // expected-error{{initializer contains unexpanded parameter pack 'Types'}}
+    Types(static_cast<Types>(0))...,
+    in_class_member_init(static_cast<Types>(0)) {} // expected-error{{initializer contains unexpanded parameter pack 'Types'}}
 
   void default_function_args(T = static_cast<Types>(0)); // expected-error{{default argument contains unexpanded parameter pack 'Types'}}
 
@@ -205,6 +211,8 @@ struct TestUnexpandedDecls : T{
     Types t; // expected-error{{declaration type contains unexpanded parameter pack 'Types'}}
     for (Types *t = 0; ; ) { } // expected-error{{declaration type contains unexpanded parameter pack 'Types'}}
     for (; Types *t = 0; ) { } // expected-error{{declaration type contains unexpanded parameter pack 'Types'}}
+    T a[] = { T(), T(), T() };
+    for (Types t : a) { } // expected-error{{declaration type contains unexpanded parameter pack 'Types'}}
     switch(Types *t = 0) { } // expected-error{{declaration type contains unexpanded parameter pack 'Types'}}
     while(Types *t = 0) { } // expected-error{{declaration type contains unexpanded parameter pack 'Types'}}
     if (Types *t = 0) { } // expected-error{{declaration type contains unexpanded parameter pack 'Types'}}
@@ -341,6 +349,8 @@ void test_unexpanded_exprs(Types ...values) {
   // SizeOfPackExpr is uninteresting
 
   // FIXME: Objective-C expressions will need to go elsewhere
+
+  for (auto t : values) { } // expected-error{{expression contains unexpanded parameter pack 'values'}}
 }
 
 // Test unexpanded parameter packs in partial specializations.

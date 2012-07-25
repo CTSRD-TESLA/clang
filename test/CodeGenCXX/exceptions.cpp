@@ -53,8 +53,8 @@ namespace test1 {
   A *c() {
     // CHECK:    define [[A:%.*]]* @_ZN5test11cEv()
     // CHECK:      [[ACTIVE:%.*]] = alloca i1
-    // CHECK-NEXT: store i1 true, i1* [[ACTIVE]] 
     // CHECK-NEXT: [[NEW:%.*]] = call noalias i8* @_Znwm(i64 8)
+    // CHECK-NEXT: store i1 true, i1* [[ACTIVE]] 
     // CHECK-NEXT: [[CAST:%.*]] = bitcast i8* [[NEW]] to [[A]]*
     // CHECK-NEXT: invoke void @_ZN5test11BC1Ev([[B:%.*]]* [[T0:%.*]])
     // CHECK:      [[T1:%.*]] = getelementptr inbounds [[B]]* [[T0]], i32 0, i32 0
@@ -72,8 +72,8 @@ namespace test1 {
   A *d() {
     // CHECK:    define [[A:%.*]]* @_ZN5test11dEv()
     // CHECK:      [[ACTIVE:%.*]] = alloca i1
-    // CHECK-NEXT: store i1 true, i1* [[ACTIVE]] 
     // CHECK-NEXT: [[NEW:%.*]] = call noalias i8* @_Znwm(i64 8)
+    // CHECK-NEXT: store i1 true, i1* [[ACTIVE]] 
     // CHECK-NEXT: [[CAST:%.*]] = bitcast i8* [[NEW]] to [[A]]*
     // CHECK-NEXT: invoke void @_ZN5test11BC1Ev([[B:%.*]]* [[T0:%.*]])
     // CHECK:      [[T1:%.*]] = invoke i32 @_ZN5test11BcviEv([[B]]* [[T0]])
@@ -90,8 +90,8 @@ namespace test1 {
   A *e() {
     // CHECK:    define [[A:%.*]]* @_ZN5test11eEv()
     // CHECK:      [[ACTIVE:%.*]] = alloca i1
-    // CHECK-NEXT: store i1 true, i1* [[ACTIVE]] 
     // CHECK-NEXT: [[NEW:%.*]] = call noalias i8* @_Znwm(i64 8)
+    // CHECK-NEXT: store i1 true, i1* [[ACTIVE]] 
     // CHECK-NEXT: [[CAST:%.*]] = bitcast i8* [[NEW]] to [[A]]*
     // CHECK-NEXT: invoke void @_ZN5test11BC1Ev([[B:%.*]]* [[T0:%.*]])
     // CHECK:      [[T1:%.*]] = invoke i32 @_ZN5test11BcviEv([[B]]* [[T0]])
@@ -121,8 +121,8 @@ namespace test1 {
     // CHECK:    define [[A:%.*]]* @_ZN5test11iEv()
     // CHECK:      [[X:%.*]] = alloca [[A]]*, align 8
     // CHECK:      [[ACTIVE:%.*]] = alloca i1
-    // CHECK:      store i1 true, i1* [[ACTIVE]] 
-    // CHECK-NEXT: [[NEW:%.*]] = call noalias i8* @_Znwm(i64 8)
+    // CHECK:      [[NEW:%.*]] = call noalias i8* @_Znwm(i64 8)
+    // CHECK-NEXT: store i1 true, i1* [[ACTIVE]] 
     // CHECK-NEXT: [[CAST:%.*]] = bitcast i8* [[NEW]] to [[A]]*
     // CHECK-NEXT: invoke void @_ZN5test15makeBEv([[B:%.*]]* sret [[T0:%.*]])
     // CHECK:      [[T1:%.*]] = invoke i32 @_ZN5test11BcviEv([[B]]* [[T0]])
@@ -194,12 +194,9 @@ namespace test3 {
     // CHECK:      [[SAVED0:%.*]] = alloca i8*
     // CHECK-NEXT: [[SAVED1:%.*]] = alloca i8*
     // CHECK-NEXT: [[CLEANUPACTIVE:%.*]] = alloca i1
-    // CHECK-NEXT: [[TMP:%.*]] = alloca [[A]], align 8
-    // CHECK:      [[TMPACTIVE:%.*]] = alloca i1
-    // CHECK-NEXT: store i1 false, i1* [[CLEANUPACTIVE]]
 
     // CHECK:      [[COND:%.*]] = trunc i8 {{.*}} to i1
-    // CHECK-NEXT: store i1 false, i1* [[TMPACTIVE]]
+    // CHECK-NEXT: store i1 false, i1* [[CLEANUPACTIVE]]
     // CHECK-NEXT: br i1 [[COND]]
     return (cond ?
 
@@ -209,24 +206,18 @@ namespace test3 {
     // CHECK-NEXT: store i8* [[FOO]], i8** [[SAVED1]]
     // CHECK-NEXT: store i1 true, i1* [[CLEANUPACTIVE]]
     // CHECK-NEXT: [[CAST:%.*]] = bitcast i8* [[NEW]] to [[A]]*
-    // CHECK-NEXT: invoke void @_ZN5test35makeAEv([[A]]* sret [[TMP]])
-    // CHECK:      store i1 true, i1* [[TMPACTIVE]]
-    // CHECK-NEXT: invoke void @_ZN5test31AC1ERKS0_([[A]]* [[CAST]], [[A]]* [[TMP]])
-    // CHECK:      store i1 false, i1* [[CLEANUPACTIVE]]
-    // CHECK-NEXT: br label
+    // CHECK-NEXT: invoke void @_ZN5test35makeAEv([[A]]* sret [[CAST]])
+    // CHECK: br label
     //   -> cond.end
             new(foo(),10.0) A(makeA()) :
 
-    // CHECK:      [[MAKE:%.*]] = invoke [[A]]* @_ZN5test38makeAPtrEv()
+    // CHECK:      [[MAKE:%.*]] = call [[A]]* @_ZN5test38makeAPtrEv()
     // CHECK:      br label
     //   -> cond.end
             makeAPtr());
 
     // cond.end:
     // CHECK:      [[RESULT:%.*]] = phi [[A]]* {{.*}}[[CAST]]{{.*}}[[MAKE]]
-    // CHECK-NEXT: [[ISACTIVE:%.*]] = load i1* [[TMPACTIVE]]
-    // CHECK-NEXT: br i1 [[ISACTIVE]]
-    // CHECK:      invoke void @_ZN5test31AD1Ev
     // CHECK:      ret [[A]]* [[RESULT]]
 
     // in the EH path:
@@ -273,9 +264,9 @@ namespace test5 {
 
   // CHECK:    define void @_ZN5test54testEv()
   // CHECK:      [[EXNSLOT:%.*]] = alloca i8*
+  // CHECK-NEXT: [[SELECTORSLOT:%.*]] = alloca i32
   // CHECK-NEXT: [[A:%.*]] = alloca [[A_T:%.*]], align 1
   // CHECK-NEXT: [[T:%.*]] = alloca [[T_T:%.*]], align 1
-  // CHECK-NEXT: alloca i32
   // CHECK-NEXT: invoke void @_ZN5test53fooEv()
   // CHECK:      [[EXN:%.*]] = load i8** [[EXNSLOT]]
   // CHECK-NEXT: [[ADJ:%.*]] = call i8* @__cxa_get_exception_ptr(i8* [[EXN]])
@@ -304,4 +295,158 @@ namespace test6 {
     } catch (...) {
     }
   }
+}
+
+// PR9298
+namespace test7 {
+  struct A { A(); ~A(); };
+  struct B {
+    // The throw() operator means that a bad allocation is signalled
+    // with a null return, which means that the initializer is
+    // evaluated conditionally.
+    static void *operator new(size_t size) throw();
+    B(const A&, B*);
+    ~B();
+  };
+
+  B *test() {
+    // CHECK: define [[B:%.*]]* @_ZN5test74testEv()
+    // CHECK:      [[OUTER_NEW:%.*]] = alloca i1
+    // CHECK-NEXT: alloca [[A:%.*]],
+    // CHECK-NEXT: alloca i8*
+    // CHECK-NEXT: alloca i32
+    // CHECK-NEXT: [[OUTER_A:%.*]] = alloca i1
+    // CHECK-NEXT: alloca i8*
+    // CHECK-NEXT: [[INNER_NEW:%.*]] = alloca i1
+    // CHECK-NEXT: alloca [[A]]
+    // CHECK-NEXT: [[INNER_A:%.*]] = alloca i1
+
+    // Allocate the outer object.
+    // CHECK-NEXT: [[NEW:%.*]] = call i8* @_ZN5test71BnwEm(
+    // CHECK-NEXT: icmp eq i8* [[NEW]], null
+
+    // These stores, emitted before the outermost conditional branch,
+    // deactivate the temporary cleanups.
+    // CHECK-NEXT: store i1 false, i1* [[OUTER_NEW]]
+    // CHECK-NEXT: store i1 false, i1* [[OUTER_A]]
+    // CHECK-NEXT: store i1 false, i1* [[INNER_NEW]]
+    // CHECK-NEXT: store i1 false, i1* [[INNER_A]]
+    // CHECK-NEXT: br i1
+
+    // We passed the first null check; activate that cleanup and continue.
+    // CHECK:      store i1 true, i1* [[OUTER_NEW]]
+    // CHECK-NEXT: bitcast
+
+    // Create the first A temporary and activate that cleanup.
+    // CHECK-NEXT: invoke void @_ZN5test71AC1Ev(
+    // CHECK:      store i1 true, i1* [[OUTER_A]]
+
+    // Allocate the inner object.
+    // CHECK-NEXT: [[NEW:%.*]] = call i8* @_ZN5test71BnwEm(
+    // CHECK-NEXT: icmp eq i8* [[NEW]], null
+    // CHECK-NEXT: br i1
+
+    // We passed the second null check; save that pointer, activate
+    // that cleanup, and continue.
+    // CHECK:      store i8* [[NEW]]
+    // CHECK-NEXT: store i1 true, i1* [[INNER_NEW]]
+    // CHECK-NEXT: bitcast
+
+    // Build the second A temporary and activate that cleanup.
+    // CHECK-NEXT: invoke void @_ZN5test71AC1Ev(
+    // CHECK:      store i1 true, i1* [[INNER_A]]
+
+    // Build the inner B object and deactivate the inner delete cleanup.
+    // CHECK-NEXT: invoke void @_ZN5test71BC1ERKNS_1AEPS0_(
+    // CHECK:      store i1 false, i1* [[INNER_NEW]]
+    // CHECK:      phi
+
+    // Build the outer B object and deactivate the outer delete cleanup.
+    // CHECK-NEXT: invoke void @_ZN5test71BC1ERKNS_1AEPS0_(
+    // CHECK:      store i1 false, i1* [[OUTER_NEW]]
+    // CHECK:      phi
+
+    // Destroy the inner A object.
+    // CHECK-NEXT: load i1* [[INNER_A]]
+    // CHECK-NEXT: br i1
+    // CHECK:      invoke void @_ZN5test71AD1Ev(
+
+    // Destroy the outer A object.
+    // CHECK:      load i1* [[OUTER_A]]
+    // CHECK-NEXT: br i1
+    // CHECK:      invoke void @_ZN5test71AD1Ev(
+
+    return new B(A(), new B(A(), 0));
+  }
+}
+
+// Just don't crash.
+namespace test8 {
+  struct A {
+    // Having both of these is required to trigger the assert we're
+    // trying to avoid.
+    A(const A&);
+    A&operator=(const A&);
+
+    ~A();
+  };
+
+  A makeA();
+  void test() {
+    throw makeA();
+  }
+  // CHECK: define void @_ZN5test84testEv
+}
+
+// Make sure we generate the correct code for the delete[] call which
+// happens if A::A() throws.  (We were previously calling delete[] on
+// a pointer to the first array element, not the pointer returned by new[].)
+// PR10870
+namespace test9 {
+  struct A {
+    A();
+    ~A();
+  };
+  A* test() {
+    return new A[10];
+  }
+  // CHECK: define {{%.*}}* @_ZN5test94testEv
+  // CHECK: [[TEST9_NEW:%.*]] = call noalias i8* @_Znam
+  // CHECK: call void @_ZdaPv(i8* [[TEST9_NEW]])
+}
+
+// In a destructor with a function-try-block, a return statement in a
+// catch handler behaves differently from running off the end of the
+// catch handler.  PR13102.
+namespace test10 {
+  extern void cleanup();
+  extern bool suppress;
+
+  struct A { ~A(); };
+  A::~A() try { cleanup(); } catch (...) { return; }
+  // CHECK:    define void @_ZN6test101AD1Ev(
+  // CHECK:      invoke void @_ZN6test107cleanupEv()
+  // CHECK-NOT:  rethrow
+  // CHECK:      ret void
+
+  struct B { ~B(); };
+  B::~B() try { cleanup(); } catch (...) {}
+  // CHECK:    define void @_ZN6test101BD1Ev(
+  // CHECK:      invoke void @_ZN6test107cleanupEv()
+  // CHECK:      call i8* @__cxa_begin_catch
+  // CHECK-NEXT: invoke void @__cxa_rethrow()
+  // CHECK:      unreachable
+
+  struct C { ~C(); };
+  C::~C() try { cleanup(); } catch (...) { if (suppress) return; }
+  // CHECK:    define void @_ZN6test101CD1Ev(
+  // CHECK:      invoke void @_ZN6test107cleanupEv()
+  // CHECK:      call i8* @__cxa_begin_catch
+  // CHECK-NEXT: load i8* @_ZN6test108suppressE, align 1
+  // CHECK-NEXT: trunc
+  // CHECK-NEXT: br i1
+  // CHECK:      call void @__cxa_end_catch()
+  // CHECK-NEXT: br label
+  // CHECK:      invoke void @__cxa_rethrow()
+  // CHECK:      unreachable
 }

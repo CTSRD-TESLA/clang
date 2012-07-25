@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify -std=c++0x %s
+// RUN: %clang_cc1 -fsyntax-only -verify -std=c++11 %s
 
 // This test creates cases where implicit instantiations of various entities
 // would cause a diagnostic, but provides expliict specializations for those
@@ -33,7 +33,7 @@ namespace N0 {
 template<> void N0::f0(int) { } // okay
 
 namespace N1 {
-  template<> void N0::f0(long) { } // expected-error{{not in a namespace enclosing}}
+  template<> void N0::f0(long) { } // expected-error{{does not enclose namespace}}
 }
 
 template<> void N0::f0(double) { }
@@ -129,7 +129,7 @@ template<> int N0::X0<int>::member;
 template<> float N0::X0<float>::member = 3.14f;
 
 namespace N1 {
-  template<> double N0::X0<double>::member = 3.14; // expected-error{{not in a namespace enclosing}}
+  template<> double N0::X0<double>::member = 3.14; // expected-error{{does not enclose namespace}}
 }
 
 //    -- member class of a class template
@@ -227,7 +227,7 @@ void N0::X0<void*>::ft1(void *, float) { }
 
 namespace N1 {
   template<> template<>
-  void N0::X0<void*>::ft1(void *, long) { } // expected-error{{enclosing}}
+  void N0::X0<void*>::ft1(void *, long) { } // expected-error{{does not enclose namespace}}
 }
 
 
@@ -237,3 +237,66 @@ void test_func_template(N0::X0<void *> xvp, void *vp, const void *cvp,
   xvp.ft1(vp, i);
   xvp.ft1(vp, u);
 }
+
+namespace has_inline_namespaces {
+  inline namespace inner {
+    template<class T> void f(T&);
+
+    template<class T> 
+    struct X0 {
+      struct MemberClass;
+
+      void mem_func();
+
+      template<typename U>
+      struct MemberClassTemplate;
+
+      template<typename U>
+      void mem_func_template(U&);
+
+      static int value;
+    };
+  }
+
+  struct X1;
+  struct X2;
+
+  // An explicit specialization whose declarator-id is not qualified
+  // shall be declared in the nearest enclosing namespace of the
+  // template, or, if the namespace is inline (7.3.1), any namespace
+  // from its enclosing namespace set.
+  template<> void f(X1&);
+  template<> void f<X2>(X2&);
+
+  template<> struct X0<X1> { };
+
+  template<> struct X0<X2>::MemberClass { };
+
+  template<> void X0<X2>::mem_func();
+
+  template<> template<typename T> struct X0<X2>::MemberClassTemplate { };
+
+  template<> template<typename T> void X0<X2>::mem_func_template(T&) { }
+
+  template<> int X0<X2>::value = 12;
+}
+
+struct X3;
+struct X4;
+
+template<> void has_inline_namespaces::f(X3&);
+template<> void has_inline_namespaces::f<X4>(X4&);
+
+template<> struct has_inline_namespaces::X0<X3> { };
+
+template<> struct has_inline_namespaces::X0<X4>::MemberClass { };
+
+template<> void has_inline_namespaces::X0<X4>::mem_func();
+
+template<> template<typename T> 
+struct has_inline_namespaces::X0<X4>::MemberClassTemplate { };
+
+template<> template<typename T> 
+void has_inline_namespaces::X0<X4>::mem_func_template(T&) { }
+
+template<> int has_inline_namespaces::X0<X4>::value = 13;

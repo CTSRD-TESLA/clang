@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fcxx-exceptions -fexceptions -verify %s
+// RUN: %clang_cc1 -fcxx-exceptions -fexceptions -verify -std=c++11 %s
 struct A { };
 struct B { };
 struct C { };
@@ -26,4 +26,40 @@ void test_CA() {
   CA2 &(CA2::*captr2)(const CA2&) throw(A, B, C) = &CA2::operator=;
   CA2 &(CA2::*captr3)(const CA2&) throw(A) = &CA2::operator=; // expected-error{{target exception specification is not superset of source}}
   CA2 &(CA2::*captr4)(const CA2&) throw(B) = &CA2::operator=; // expected-error{{target exception specification is not superset of source}}
+}
+
+// In-class member initializers.
+struct IC0 {
+  int inClassInit = 0;
+};
+struct IC1 {
+  int inClassInit = (throw B(), 0);
+};
+// FIXME: the exception specification on the default constructor is wrong:
+// we cannot currently compute the set of thrown types.
+static_assert(noexcept(IC0()), "IC0() does not throw");
+static_assert(!noexcept(IC1()), "IC1() throws");
+
+namespace PR13381 {
+  struct NoThrowMove {
+    NoThrowMove(const NoThrowMove &);
+    NoThrowMove(NoThrowMove &&) noexcept;
+    NoThrowMove &operator=(const NoThrowMove &);
+    NoThrowMove &operator=(NoThrowMove &&) noexcept;
+  };
+  struct NoThrowMoveOnly {
+    NoThrowMoveOnly(NoThrowMoveOnly &&) noexcept;
+    NoThrowMoveOnly &operator=(NoThrowMoveOnly &&) noexcept;
+  };
+  struct X {
+    const NoThrowMove a;
+    NoThrowMoveOnly b;
+
+    static X val();
+    static X &ref();
+  };
+  // These both perform a move, but that copy might throw, because it calls
+  // NoThrowMove's copy constructor (because PR13381::a is const).
+  static_assert(!noexcept(X(X::val())), "");
+  static_assert(!noexcept(X::ref() = X::val()), "");
 }

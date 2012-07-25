@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify -std=c++0x %s
+// RUN: %clang_cc1 -fsyntax-only -verify -std=c++11 %s
 
 template <class T>
 struct only
@@ -20,6 +20,16 @@ auto f() -> int
 auto g(); // expected-error{{return without trailing return type}}
 
 int h() -> int; // expected-error{{trailing return type must specify return type 'auto', not 'int'}}
+
+int i();
+auto i() -> int;
+int i() {}
+
+using T = auto (int) -> auto (*)(char) -> void; // expected-note {{previous}}
+using T = void; // expected-error {{type alias redefinition with different types ('void' vs 'auto (int) -> auto (*)(char) -> void')}}
+
+using U = auto (int) -> auto (*)(char) -> void;
+using U = void (*(int))(char); // ok
 
 int x;
 

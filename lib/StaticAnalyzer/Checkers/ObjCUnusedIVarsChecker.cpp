@@ -29,7 +29,7 @@ using namespace ento;
 enum IVarState { Unused, Used };
 typedef llvm::DenseMap<const ObjCIvarDecl*,IVarState> IvarUsageMap;
 
-static void Scan(IvarUsageMap& M, const Stmt* S) {
+static void Scan(IvarUsageMap& M, const Stmt *S) {
   if (!S)
     return;
 
@@ -47,15 +47,24 @@ static void Scan(IvarUsageMap& M, const Stmt* S) {
     return;
   }
 
+  if (const PseudoObjectExpr *POE = dyn_cast<PseudoObjectExpr>(S))
+    for (PseudoObjectExpr::const_semantics_iterator
+        i = POE->semantics_begin(), e = POE->semantics_end(); i != e; ++i) {
+      const Expr *sub = *i;
+      if (const OpaqueValueExpr *OVE = dyn_cast<OpaqueValueExpr>(sub))
+        sub = OVE->getSourceExpr();
+      Scan(M, sub);
+    }
+
   for (Stmt::const_child_iterator I=S->child_begin(),E=S->child_end(); I!=E;++I)
     Scan(M, *I);
 }
 
-static void Scan(IvarUsageMap& M, const ObjCPropertyImplDecl* D) {
+static void Scan(IvarUsageMap& M, const ObjCPropertyImplDecl *D) {
   if (!D)
     return;
 
-  const ObjCIvarDecl* ID = D->getPropertyIvarDecl();
+  const ObjCIvarDecl *ID = D->getPropertyIvarDecl();
 
   if (!ID)
     return;
@@ -65,7 +74,7 @@ static void Scan(IvarUsageMap& M, const ObjCPropertyImplDecl* D) {
     I->second = Used;
 }
 
-static void Scan(IvarUsageMap& M, const ObjCContainerDecl* D) {
+static void Scan(IvarUsageMap& M, const ObjCContainerDecl *D) {
   // Scan the methods for accesses.
   for (ObjCContainerDecl::instmeth_iterator I = D->instmeth_begin(),
        E = D->instmeth_end(); I!=E; ++I)
@@ -102,14 +111,14 @@ static void Scan(IvarUsageMap &M, const DeclContext *C, const FileID FID,
 static void checkObjCUnusedIvar(const ObjCImplementationDecl *D,
                                 BugReporter &BR) {
 
-  const ObjCInterfaceDecl* ID = D->getClassInterface();
+  const ObjCInterfaceDecl *ID = D->getClassInterface();
   IvarUsageMap M;
 
   // Iterate over the ivars.
   for (ObjCInterfaceDecl::ivar_iterator I=ID->ivar_begin(),
         E=ID->ivar_end(); I!=E; ++I) {
 
-    const ObjCIvarDecl* ID = *I;
+    const ObjCIvarDecl *ID = *I;
 
     // Ignore ivars that...
     // (a) aren't private
@@ -155,12 +164,14 @@ static void checkObjCUnusedIvar(const ObjCImplementationDecl *D,
     if (I->second == Unused) {
       std::string sbuf;
       llvm::raw_string_ostream os(sbuf);
-      os << "Instance variable '" << I->first << "' in class '" << ID
+      os << "Instance variable '" << *I->first << "' in class '" << *ID
          << "' is never used by the methods in its @implementation "
             "(although it may be used by category methods).";
 
-      BR.EmitBasicReport("Unused instance variable", "Optimization",
-                         os.str(), I->first->getLocation());
+      PathDiagnosticLocation L =
+        PathDiagnosticLocation::create(I->first, BR.getSourceManager());
+      BR.EmitBasicReport(D, "Unused instance variable", "Optimization",
+                         os.str(), L);
     }
 }
 

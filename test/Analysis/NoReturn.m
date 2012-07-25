@@ -1,7 +1,5 @@
-// RUN: %clang_cc1 -analyze -analyzer-checker=core,core.experimental -analyzer-store=basic -analyzer-constraints=basic -verify %s
-// RUN: %clang_cc1 -analyze -analyzer-checker=core,core.experimental -analyzer-store=basic -analyzer-constraints=range -verify %s
-// RUN: %clang_cc1 -analyze -analyzer-checker=core,core.experimental -analyzer-store=region -analyzer-constraints=basic -verify %s
-// RUN: %clang_cc1 -analyze -analyzer-checker=core,core.experimental -analyzer-store=region -analyzer-constraints=range -verify %s
+// RUN: %clang_cc1 -analyze -analyzer-checker=core,experimental.core -analyzer-store=region -analyzer-constraints=basic -verify %s
+// RUN: %clang_cc1 -analyze -analyzer-checker=core,experimental.core -analyzer-store=region -analyzer-constraints=range -verify %s
 
 #include <stdarg.h>
 
@@ -74,6 +72,18 @@ int f3(int* x) {
   if (x) ++x;
   
   [[NSException exceptionWithName:@"My Exception" reason:@"Want to test exceptions." userInfo:0] raise];
+
+  return *x; // no-warning
+}
+
+
+@interface CustomException : NSException
+@end
+
+int testCustomException(int *x) {
+  if (x != 0) return 0;
+
+  [CustomException raise:@"Blah" format:@"abc"];
 
   return *x; // no-warning
 }

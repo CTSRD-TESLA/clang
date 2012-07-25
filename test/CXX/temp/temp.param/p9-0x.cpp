@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -std=c++0x -fsyntax-only -verify %s
+// RUN: %clang_cc1 -std=c++11 -fsyntax-only -verify %s
 
 // A default template-argument may be specified for any kind of
 // template-parameter that is not a template parameter pack.
@@ -49,4 +49,13 @@ namespace PR8748 {
   // Okay; not class members.
   template<typename T = int> struct Inner::X3 { };
   template<typename T = int> void Inner::f2() {}
+}
+
+namespace PR10069 {
+  template<typename T, T a, T b=0, T c=1>
+  T f(T x);
+
+  void g() {
+    f<unsigned int, 0>(0);
+  }
 }

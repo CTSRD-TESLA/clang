@@ -21,7 +21,7 @@
 #include "clang/Basic/Version.h"
 #include "clang/Sema/CodeCompleteConsumer.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/Config/config.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
@@ -32,6 +32,7 @@
 #include <sstream>
 
 #ifdef __CYGWIN__
+#include <cygwin/version.h>
 #include <sys/cygwin.h>
 #define LLVM_ON_WIN32 1
 #endif
@@ -60,7 +61,11 @@ std::string CIndexer::getClangResourcesPath() {
 #ifdef __CYGWIN__
   char w32path[MAX_PATH];
   strcpy(w32path, path);
+#if CYGWIN_VERSION_API_MAJOR > 0 || CYGWIN_VERSION_API_MINOR >= 181
+  cygwin_conv_path(CCP_WIN_A_TO_POSIX, w32path, path, MAX_PATH);
+#else
   cygwin_conv_to_full_posix_path(w32path, path);
+#endif
 #endif
 
   llvm::sys::Path LibClangPath(path);
@@ -69,7 +74,7 @@ std::string CIndexer::getClangResourcesPath() {
   // This silly cast below avoids a C++ warning.
   Dl_info info;
   if (dladdr((void *)(uintptr_t)clang_createTranslationUnit, &info) == 0)
-    assert(0 && "Call to dladdr() failed");
+    llvm_unreachable("Call to dladdr() failed");
   
   llvm::sys::Path LibClangPath(info.dli_fname);
   

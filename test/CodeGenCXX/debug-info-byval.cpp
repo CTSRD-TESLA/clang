@@ -1,5 +1,5 @@
 // RUN: %clang -g -S %s -o - | FileCheck %s
-// Test to check presense of debug info for byval parameter.
+// Test to check presence of debug info for byval parameter.
 // Radar 8350436.
 class DAG {
 public:
@@ -23,7 +23,7 @@ void foo(EVT e);
 EVT bar();
 
 void get(int *i, unsigned dl, VAL v, VAL *p, unsigned n, EVT missing_arg) {
-//CHECK: .ascii "missing_arg"
+//CHECK: .asciz "missing_arg"
   EVT e = bar();
   if (dl == n)
     foo(missing_arg);

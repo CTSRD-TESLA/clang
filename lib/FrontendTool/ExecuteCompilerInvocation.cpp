@@ -14,8 +14,9 @@
 
 #include "clang/FrontendTool/Utils.h"
 #include "clang/StaticAnalyzer/Frontend/FrontendActions.h"
+#include "clang/ARCMigrate/ARCMTActions.h"
 #include "clang/CodeGen/CodeGenAction.h"
-#include "clang/Driver/CC1Options.h"
+#include "clang/Driver/Options.h"
 #include "clang/Driver/OptTable.h"
 #include "clang/Frontend/CompilerInvocation.h"
 #include "clang/Frontend/CompilerInstance.h"
@@ -31,16 +32,10 @@ static FrontendAction *CreateFrontendBaseAction(CompilerInstance &CI) {
   using namespace clang::frontend;
 
   switch (CI.getFrontendOpts().ProgramAction) {
-  default:
-    llvm_unreachable("Invalid program action!");
-
   case ASTDump:                return new ASTDumpAction();
   case ASTDumpXML:             return new ASTDumpXMLAction();
   case ASTPrint:               return new ASTPrintAction();
-  case ASTPrintXML:            return new ASTPrintXMLAction();
   case ASTView:                return new ASTViewAction();
-  case BoostCon:               return new BoostConAction();
-  case CreateModule:           return 0;
   case DumpRawTokens:          return new DumpRawTokensAction();
   case DumpTokens:             return new DumpTokensAction();
   case EmitAssembly:           return new EmitAssemblyAction();
@@ -51,7 +46,8 @@ static FrontendAction *CreateFrontendBaseAction(CompilerInstance &CI) {
   case EmitCodeGenOnly:        return new EmitCodeGenOnlyAction();
   case EmitObj:                return new EmitObjAction();
   case FixIt:                  return new FixItAction();
-  case GeneratePCH:            return new GeneratePCHAction();
+  case GenerateModule:         return new GenerateModuleAction;
+  case GeneratePCH:            return new GeneratePCHAction;
   case GeneratePTH:            return new GeneratePTHAction();
   case InitOnly:               return new InitOnlyAction();
   case ParseSyntaxOnly:        return new SyntaxOnlyAction();
@@ -61,7 +57,7 @@ static FrontendAction *CreateFrontendBaseAction(CompilerInstance &CI) {
            FrontendPluginRegistry::begin(), ie = FrontendPluginRegistry::end();
          it != ie; ++it) {
       if (it->getName() == CI.getFrontendOpts().ActionName) {
-        llvm::OwningPtr<PluginASTAction> P(it->instantiate());
+        OwningPtr<PluginASTAction> P(it->instantiate());
         if (!P->ParseArgs(CI, CI.getFrontendOpts().PluginArgs))
           return 0;
         return P.take();
@@ -75,13 +71,20 @@ static FrontendAction *CreateFrontendBaseAction(CompilerInstance &CI) {
 
   case PrintDeclContext:       return new DeclContextPrintAction();
   case PrintPreamble:          return new PrintPreambleAction();
-  case PrintPreprocessedInput: return new PrintPreprocessedAction();
+  case PrintPreprocessedInput: {
+    if (CI.getPreprocessorOutputOpts().RewriteIncludes)
+      return new RewriteIncludesAction();
+    return new PrintPreprocessedAction();
+  }
+
   case RewriteMacros:          return new RewriteMacrosAction();
   case RewriteObjC:            return new RewriteObjCAction();
   case RewriteTest:            return new RewriteTestAction();
   case RunAnalysis:            return new ento::AnalysisAction();
+  case MigrateSource:          return new arcmt::MigrateSourceAction();
   case RunPreprocessorOnly:    return new PreprocessOnlyAction();
   }
+  llvm_unreachable("Invalid program action!");
 }
 
 static FrontendAction *CreateFrontendAction(CompilerInstance &CI) {
@@ -90,11 +93,40 @@ static FrontendAction *CreateFrontendAction(CompilerInstance &CI) {
   if (!Act)
     return 0;
 
+  const FrontendOptions &FEOpts = CI.getFrontendOpts();
+
+  if (FEOpts.FixAndRecompile) {
+    Act = new FixItRecompile(Act);
+  }
+  
+  // Potentially wrap the base FE action in an ARC Migrate Tool action.
+  switch (FEOpts.ARCMTAction) {
+  case FrontendOptions::ARCMT_None:
+    break;
+  case FrontendOptions::ARCMT_Check:
+    Act = new arcmt::CheckAction(Act);
+    break;
+  case FrontendOptions::ARCMT_Modify:
+    Act = new arcmt::ModifyAction(Act);
+    break;
+  case FrontendOptions::ARCMT_Migrate:
+    Act = new arcmt::MigrateAction(Act,
+                                   FEOpts.MTMigrateDir,
+                                   FEOpts.ARCMTMigrateReportOut,
+                                   FEOpts.ARCMTMigrateEmitARCErrors);
+    break;
+  }
+
+  if (FEOpts.ObjCMTAction != FrontendOptions::ObjCMT_None) {
+    Act = new arcmt::ObjCMigrateAction(Act, FEOpts.MTMigrateDir,
+                   FEOpts.ObjCMTAction & ~FrontendOptions::ObjCMT_Literals,
+                   FEOpts.ObjCMTAction & ~FrontendOptions::ObjCMT_Subscripting);
+  }
+
   // If there are any AST files to merge, create a frontend action
   // adaptor to perform the merge.
-  if (!CI.getFrontendOpts().ASTMergeFiles.empty())
-    Act = new ASTMergeAction(Act, &CI.getFrontendOpts().ASTMergeFiles[0],
-                             CI.getFrontendOpts().ASTMergeFiles.size());
+  if (!FEOpts.ASTMergeFiles.empty())
+    Act = new ASTMergeAction(Act, FEOpts.ASTMergeFiles);
 
   return Act;
 }
@@ -102,15 +134,9 @@ static FrontendAction *CreateFrontendAction(CompilerInstance &CI) {
 bool clang::ExecuteCompilerInvocation(CompilerInstance *Clang) {
   // Honor -help.
   if (Clang->getFrontendOpts().ShowHelp) {
-    llvm::OwningPtr<driver::OptTable> Opts(driver::createCC1OptTable());
+    OwningPtr<driver::OptTable> Opts(driver::createDriverOptTable());
     Opts->PrintHelp(llvm::outs(), "clang -cc1",
                     "LLVM 'Clang' Compiler: http://clang.llvm.org");
-    return 0;
-  }
-
-  // Honor -analyzer-checker-help.
-  if (Clang->getAnalyzerOpts().ShowCheckerHelp) {
-    ento::printCheckerHelp(llvm::outs());
     return 0;
   }
 
@@ -120,19 +146,6 @@ bool clang::ExecuteCompilerInvocation(CompilerInstance *Clang) {
   if (Clang->getFrontendOpts().ShowVersion) {
     llvm::cl::PrintVersionMessage();
     return 0;
-  }
-
-  // Honor -mllvm.
-  //
-  // FIXME: Remove this, one day.
-  if (!Clang->getFrontendOpts().LLVMArgs.empty()) {
-    unsigned NumArgs = Clang->getFrontendOpts().LLVMArgs.size();
-    const char **Args = new const char*[NumArgs + 2];
-    Args[0] = "clang (LLVM option parsing)";
-    for (unsigned i = 0; i != NumArgs; ++i)
-      Args[i + 1] = Clang->getFrontendOpts().LLVMArgs[i].c_str();
-    Args[NumArgs + 1] = 0;
-    llvm::cl::ParseCommandLineOptions(NumArgs + 1, const_cast<char **>(Args));
   }
 
   // Load any requested plugins.
@@ -145,11 +158,32 @@ bool clang::ExecuteCompilerInvocation(CompilerInstance *Clang) {
         << Path << Error;
   }
 
+  // Honor -mllvm.
+  //
+  // FIXME: Remove this, one day.
+  // This should happen AFTER plugins have been loaded!
+  if (!Clang->getFrontendOpts().LLVMArgs.empty()) {
+    unsigned NumArgs = Clang->getFrontendOpts().LLVMArgs.size();
+    const char **Args = new const char*[NumArgs + 2];
+    Args[0] = "clang (LLVM option parsing)";
+    for (unsigned i = 0; i != NumArgs; ++i)
+      Args[i + 1] = Clang->getFrontendOpts().LLVMArgs[i].c_str();
+    Args[NumArgs + 1] = 0;
+    llvm::cl::ParseCommandLineOptions(NumArgs + 1, Args);
+  }
+
+  // Honor -analyzer-checker-help.
+  // This should happen AFTER plugins have been loaded!
+  if (Clang->getAnalyzerOpts().ShowCheckerHelp) {
+    ento::printCheckerHelp(llvm::outs(), Clang->getFrontendOpts().Plugins);
+    return 0;
+  }
+
   // If there were errors in processing arguments, don't do anything else.
   bool Success = false;
   if (!Clang->getDiagnostics().hasErrorOccurred()) {
     // Create and execute the frontend action.
-    llvm::OwningPtr<FrontendAction> Act(CreateFrontendAction(*Clang));
+    OwningPtr<FrontendAction> Act(CreateFrontendAction(*Clang));
     if (Act) {
       Success = Clang->ExecuteAction(*Act);
       if (Clang->getFrontendOpts().DisableFree)

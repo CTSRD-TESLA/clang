@@ -4,7 +4,7 @@
 // CHECK: @t5 = weak global i32 2
 int t5 __attribute__((weak)) = 2;
 
-// CHECK: @t13 = global %0 zeroinitializer, section "SECT"
+// CHECK: @t13 = global %struct.s0 zeroinitializer, section "SECT"
 struct s0 { int x; };
 struct s0 t13 __attribute__((section("SECT"))) = { 0 };
 
@@ -81,3 +81,11 @@ void t21(void) {
 }
 // CHECK: [[FPTRVAR:%[a-z0-9]+]] = load void (i32)** @fptr
 // CHECK-NEXT: call x86_fastcallcc void [[FPTRVAR]](i32 10)
+
+
+// PR9356: We might want to err on this, but for now at least make sure we
+// use the section in the definition.
+void __attribute__((section(".foo"))) t22(void);
+void __attribute__((section(".bar"))) t22(void) {}
+
+// CHECK: define void @t22() nounwind section ".bar"

@@ -1,15 +1,15 @@
-// RUN: %clang_cc1 %s -fsyntax-only -verify
+// RUN: %clang_cc1 -fsyntax-only -verify -Wno-objc-root-class %s
 
 @interface A {
-  int X __attribute__((deprecated));
+  int X __attribute__((deprecated)); // expected-note 2 {{declared here}}
 }
-+ (void)F __attribute__((deprecated));
-- (void)f __attribute__((deprecated));
++ (void)F __attribute__((deprecated)); // expected-note 2 {{declared here}}
+- (void)f __attribute__((deprecated)); // expected-note 4 {{declared here}}
 @end
 
 @implementation A
 + (void)F __attribute__((deprecated))
-{	// expected-warning {{method attribute can only be specified on method declarations}}
+{
   [self F]; // no warning, since the caller is also deprecated.
 }
 
@@ -42,7 +42,7 @@
 @end
 
 @protocol P
-- (void)p __attribute__((deprecated));
+- (void)p __attribute__((deprecated)); // expected-note {{declared here}}
 @end
 
 void t1(A *a)
@@ -71,34 +71,43 @@ void t4(Class c)
 
 @interface Bar 
 
-@property (assign, setter = MySetter:) int FooBar __attribute__ ((deprecated));
+@property (assign, setter = MySetter:) int FooBar __attribute__ ((deprecated)); // expected-note 2 {{declared here}}
 - (void) MySetter : (int) value;
 @end
 
 int t5() {
   Bar *f;
-  f.FooBar = 1;	   // expected-warning {{warning: 'FooBar' is deprecated}}
-  return f.FooBar; // expected-warning {{warning: 'FooBar' is deprecated}}
+  f.FooBar = 1;	   // expected-warning {{'FooBar' is deprecated}}
+  return f.FooBar; // expected-warning {{'FooBar' is deprecated}}
 }
 
 
 __attribute ((deprecated))  
-@interface DEPRECATED {
+@interface DEPRECATED { // expected-note 2 {{declared here}}
   @public int ivar; 
+  DEPRECATED *ivar2; // no warning.
 } 
 - (int) instancemethod;
+- (DEPRECATED *) meth; // no warning.
 @property  int prop; 
 @end
 
-@interface DEPRECATED (Category) // expected-warning {{warning: 'DEPRECATED' is deprecated}}
+@interface DEPRECATED (Category) // no warning.
+- (DEPRECATED *) meth2; // no warning.
 @end
 
-@interface NS : DEPRECATED  // expected-warning {{warning: 'DEPRECATED' is deprecated}}
+@interface DEPRECATED (Category2) // no warning.
+@end
+
+@implementation DEPRECATED (Category2) // expected-warning {{'DEPRECATED' is deprecated}}
+@end
+
+@interface NS : DEPRECATED  // expected-warning {{'DEPRECATED' is deprecated}}
 @end
 
 
 @interface Test2
-@property int test2 __attribute__((deprecated));
+@property int test2 __attribute__((deprecated)); // expected-note 4 {{declared here}}
 @end
 
 void test(Test2 *foo) {
@@ -108,3 +117,7 @@ void test(Test2 *foo) {
   foo.test2 = x; // expected-warning {{'test2' is deprecated}}
   [foo setTest2: x]; // expected-warning {{'setTest2:' is deprecated}}
 }
+
+__attribute__((deprecated))
+@interface A(Blah) // expected-error{{attributes may not be specified on a category}}
+@end

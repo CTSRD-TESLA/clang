@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify %s
+// RUN: %clang_cc1 -fsyntax-only -verify -Wno-objc-root-class %s
 
 /* This test is for categories which don't implement the accessors but some accessors are
    implemented in their base class implementation. In this case,no warning must be issued.
@@ -24,8 +24,8 @@
 @end
 
 @interface MyClass (public)
-@property(readwrite)    int        foo;	// expected-warning {{property 'foo' requires method 'setFoo:' to be defined }}
+@property(readwrite)    int        foo;	// expected-note {{property declared here}}
 @end
 
-@implementation MyClass (public)// expected-note {{implementation is here}}
+@implementation MyClass (public)// expected-warning {{property 'foo' requires method 'setFoo:' to be defined }}
 @end 

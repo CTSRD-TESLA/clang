@@ -57,6 +57,8 @@ class Diagnostic<string text, DiagClass DC, DiagMapping defaultmapping> {
   DiagClass   Class = DC;
   bit         SFINAE = 1;
   bit         AccessControl = 0;
+  bit         WarningNoWerror = 0;
+  bit         WarningShowInSystemHeader = 0;
   DiagMapping DefaultMapping = defaultmapping;
   DiagGroup   Group;
   string      CategoryName = "";
@@ -73,6 +75,12 @@ class DefaultIgnore { DiagMapping DefaultMapping = MAP_IGNORE; }
 class DefaultWarn   { DiagMapping DefaultMapping = MAP_WARNING; }
 class DefaultError  { DiagMapping DefaultMapping = MAP_ERROR; }
 class DefaultFatal  { DiagMapping DefaultMapping = MAP_FATAL; }
+class DefaultWarnNoWerror {
+  bit WarningNoWerror = 1;
+}
+class DefaultWarnShowInSystemHeader {
+  bit WarningShowInSystemHeader = 1;
+}
 
 class NoSFINAE { bit SFINAE = 0; }
 class AccessControl { bit AccessControl = 1; }
@@ -80,10 +88,12 @@ class AccessControl { bit AccessControl = 1; }
 // Definitions for Diagnostics.
 include "DiagnosticASTKinds.td"
 include "DiagnosticAnalysisKinds.td"
+include "DiagnosticCommentKinds.td"
 include "DiagnosticCommonKinds.td"
 include "DiagnosticDriverKinds.td"
 include "DiagnosticFrontendKinds.td"
 include "DiagnosticLexKinds.td"
 include "DiagnosticParseKinds.td"
 include "DiagnosticSemaKinds.td"
+include "DiagnosticSerializationKinds.td"
 

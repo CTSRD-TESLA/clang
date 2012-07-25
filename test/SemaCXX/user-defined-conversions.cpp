@@ -69,7 +69,7 @@ void test_conversion(ConvertibleToBase ctb, ConvertibleToDerived ctd,
 }
 
 struct X1 {
-  X1(X1&); // expected-note{{candidate constructor not viable: no known conversion from 'X1' to 'X1 &' for 1st argument}}
+  X1(X1&); // expected-note{{candidate constructor not viable: expects an l-value for 1st argument}}
 };
 
 struct X2 {
@@ -81,4 +81,19 @@ float &f(...);
 
 void g(X2 b) {
   int &ir = f(b); // expected-error{{no viable constructor copying parameter of type 'X1'}}
+}
+
+namespace rdar10202900 {
+  class A {
+  public:
+    A();
+
+  private:
+    A(int i); // expected-note{{declared private here}}
+  };
+
+  void testA(A a) {
+    int b = 10;
+    a = b; // expected-error{{calling a private constructor of class 'rdar10202900::A'}}
+  }
 }

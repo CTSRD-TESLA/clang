@@ -1,13 +1,8 @@
-// RUN: %clang_cc1 -triple i386-apple-darwin10 -analyze -analyzer-checker=core,cocoa.NilArg,macosx.AtomicCAS,core.experimental -analyzer-store=region -analyzer-constraints=basic -verify %s
-// RUN: %clang_cc1 -triple i386-apple-darwin10 -analyze -analyzer-checker=core,cocoa.NilArg,macosx.AtomicCAS,core.experimental -analyzer-store=region -analyzer-constraints=range -verify %s
-// RUN: %clang_cc1 -DTEST_64 -triple x86_64-apple-darwin10 -analyze -analyzer-checker=core,cocoa.NilArg,macosx.AtomicCAS,core.experimental -analyzer-store=region -analyzer-constraints=basic -verify %s
-// RUN: %clang_cc1 -DTEST_64 -triple x86_64-apple-darwin10 -analyze -analyzer-checker=core,cocoa.NilArg,macosx.AtomicCAS,core.experimental -analyzer-store=region -analyzer-constraints=range -verify %s
+// RUN: %clang_cc1 -triple i386-apple-darwin10 -analyze -analyzer-checker=core,osx.cocoa.NilArg,osx.cocoa.RetainCount,osx.AtomicCAS,experimental.core -analyzer-store=region -analyzer-constraints=basic -verify -Wno-objc-root-class %s
+// RUN: %clang_cc1 -triple i386-apple-darwin10 -analyze -analyzer-checker=core,osx.cocoa.NilArg,osx.cocoa.RetainCount,osx.AtomicCAS,experimental.core -analyzer-store=region -analyzer-constraints=range -verify -Wno-objc-root-class %s
+// RUN: %clang_cc1 -DTEST_64 -triple x86_64-apple-darwin10 -analyze -analyzer-checker=core,osx.cocoa.NilArg,osx.cocoa.RetainCount,osx.AtomicCAS,experimental.core -analyzer-store=region -analyzer-constraints=basic -verify -Wno-objc-root-class %s
+// RUN: %clang_cc1 -DTEST_64 -triple x86_64-apple-darwin10 -analyze -analyzer-checker=core,osx.cocoa.NilArg,osx.cocoa.RetainCount,osx.AtomicCAS,experimental.core -analyzer-store=region -analyzer-constraints=range -verify -Wno-objc-root-class %s
 
-// ==-- FIXME: -analyzer-store=basic fails on this file (false negatives). --==
-// NOTWORK: %clang_cc1 -triple i386-apple-darwin10 -analyze -analyzer-checker=core,cocoa.NilArg,macosx.AtomicCAS,core.experimental -analyzer-store=basic -analyzer-constraints=range -verify %s &&
-// NOTWORK: %clang_cc1 -triple i386-apple-darwin10 -analyze -analyzer-checker=core,cocoa.NilArg,macosx.AtomicCAS,core.experimental -analyzer-store=basic -analyzer-constraints=basic -verify %s &&
-// NOTWORK: %clang_cc1 -DTEST_64 -triple x86_64-apple-darwin10 -analyze -analyzer-checker=core,cocoa.NilArg,macosx.AtomicCAS,core.experimental -analyzer-store=basic -analyzer-constraints=basic -verify %s &&
-// NOTWORK: %clang_cc1 -DTEST_64 -triple x86_64-apple-darwin10 -analyze -analyzer-checker=core,cocoa.NilArg,macosx.AtomicCAS,core.experimental -analyzer-store=basic -analyzer-constraints=range -verify %s
 
 //===----------------------------------------------------------------------===//
 // The following code is reduced using delta-debugging from
@@ -102,31 +97,31 @@ extern void *_NSConstantStringClassReference;
 
 NSComparisonResult f1(NSString* s) {
   NSString *aString = 0;
-  return [s compare:aString]; // expected-warning {{Argument to 'NSString' method 'compare:' cannot be nil.}}
+  return [s compare:aString]; // expected-warning {{Argument to 'NSString' method 'compare:' cannot be nil}}
 }
 
 NSComparisonResult f2(NSString* s) {
   NSString *aString = 0;
-  return [s caseInsensitiveCompare:aString]; // expected-warning {{Argument to 'NSString' method 'caseInsensitiveCompare:' cannot be nil.}}
+  return [s caseInsensitiveCompare:aString]; // expected-warning {{Argument to 'NSString' method 'caseInsensitiveCompare:' cannot be nil}}
 }
 
 NSComparisonResult f3(NSString* s, NSStringCompareOptions op) {
   NSString *aString = 0;
-  return [s compare:aString options:op]; // expected-warning {{Argument to 'NSString' method 'compare:options:' cannot be nil.}}
+  return [s compare:aString options:op]; // expected-warning {{Argument to 'NSString' method 'compare:options:' cannot be nil}}
 }
 
 NSComparisonResult f4(NSString* s, NSStringCompareOptions op, NSRange R) {
   NSString *aString = 0;
-  return [s compare:aString options:op range:R]; // expected-warning {{Argument to 'NSString' method 'compare:options:range:' cannot be nil.}}
+  return [s compare:aString options:op range:R]; // expected-warning {{Argument to 'NSString' method 'compare:options:range:' cannot be nil}}
 }
 
 NSComparisonResult f5(NSString* s, NSStringCompareOptions op, NSRange R) {
   NSString *aString = 0;
-  return [s compare:aString options:op range:R locale:0]; // expected-warning {{Argument to 'NSString' method 'compare:options:range:locale:' cannot be nil.}}
+  return [s compare:aString options:op range:R locale:0]; // expected-warning {{Argument to 'NSString' method 'compare:options:range:locale:' cannot be nil}}
 }
 
 NSArray *f6(NSString* s) {
-  return [s componentsSeparatedByCharactersInSet:0]; // expected-warning {{Argument to 'NSString' method 'componentsSeparatedByCharactersInSet:' cannot be nil.}}
+  return [s componentsSeparatedByCharactersInSet:0]; // expected-warning {{Argument to 'NSString' method 'componentsSeparatedByCharactersInSet:' cannot be nil}}
 }
 
 NSString* f7(NSString* s1, NSString* s2, NSString* s3) {
@@ -188,6 +183,13 @@ void f13(void) {
   CFStringRef ref = CFStringCreateWithFormat(kCFAllocatorDefault, ((void*)0), ((CFStringRef) __builtin___CFStringMakeConstantString ("" "%d" "")), 100);
   CFRelease(ref);
   CFRelease(ref); // expected-warning{{Reference-counted object is used after it is released}}
+}
+
+@interface MyString : NSString
+@end
+
+void f14(MyString *s) {
+  [s compare:0]; // expected-warning {{Argument to 'MyString' method 'compare:' cannot be nil}}
 }
 
 // Test regular use of -autorelease

@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -fobjc-nonfragile-abi -fobjc-default-synthesize-properties -verify %s
+// RUN: %clang_cc1 -fsyntax-only -fobjc-default-synthesize-properties -verify -Wno-objc-root-class %s
 @interface I
 {
 }
@@ -31,8 +31,8 @@ int f0(I *a) { return a->IP; } // expected-error {{instance variable 'IP' is pri
 
 @implementation I1
 - (int) Meth {
-   PROP_INMAIN = 1;
-   PROP_INCLASSEXT = 2;
+   _PROP_INMAIN = 1;
+   _PROP_INCLASSEXT = 2;
    protected_ivar = 1;	// OK
    return private_ivar; // OK
 }
@@ -45,9 +45,17 @@ int f0(I *a) { return a->IP; } // expected-error {{instance variable 'IP' is pri
 @implementation DER
 - (int) Meth {
    protected_ivar = 1;	// OK
-   PROP_INMAIN = 1; // expected-error {{instance variable 'PROP_INMAIN' is private}}
-   PROP_INCLASSEXT = 2; // expected-error {{instance variable 'PROP_INCLASSEXT' is private}}
+   _PROP_INMAIN = 1; // expected-error {{instance variable '_PROP_INMAIN' is private}}
+   _PROP_INCLASSEXT = 2; // expected-error {{instance variable '_PROP_INCLASSEXT' is private}}
    return private_ivar; // expected-error {{instance variable 'private_ivar' is private}}
 }
 @end
 
+@interface A
+@property (weak) id testObjectWeakProperty; // expected-note {{declared here}}
+@end
+
+@implementation A
+// rdar://9605088
+@synthesize testObjectWeakProperty; // expected-error {{@synthesize of 'weak' property is only allowed in ARC or GC mode}}
+@end

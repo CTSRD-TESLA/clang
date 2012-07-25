@@ -108,6 +108,8 @@ public:
   /// or a derived class thereof, a NULL canonical type.
   template<typename U> CanProxy<U> getAs() const;
 
+  template<typename U> CanProxy<U> castAs() const;
+
   /// \brief Overloaded arrow operator that produces a canonical type
   /// proxy.
   CanProxy<T> operator->() const;
@@ -250,7 +252,6 @@ public:
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isObjectType)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isIncompleteType)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isIncompleteOrObjectType)
-  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isPODType)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isVariablyModifiedType)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isIntegerType)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isEnumeralType)
@@ -291,8 +292,11 @@ public:
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isPromotableIntegerType)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isSignedIntegerType)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isUnsignedIntegerType)
+  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isSignedIntegerOrEnumerationType)
+  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isUnsignedIntegerOrEnumerationType)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isConstantSizeType)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isSpecifierType)
+  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(CXXRecordDecl*, getAsCXXRecordDecl)
 
   /// \brief Retrieve the proxy-adaptor type.
   ///
@@ -630,6 +634,14 @@ struct CanProxyAdaptor<DecltypeType> : public CanProxyBase<DecltypeType> {
   LLVM_CLANG_CANPROXY_TYPE_ACCESSOR(getUnderlyingType)
 };
 
+template <>
+struct CanProxyAdaptor<UnaryTransformType>
+    : public CanProxyBase<UnaryTransformType> {
+  LLVM_CLANG_CANPROXY_TYPE_ACCESSOR(getBaseType)
+  LLVM_CLANG_CANPROXY_TYPE_ACCESSOR(getUnderlyingType)
+  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(UnaryTransformType::UTTKind, getUTTKind)
+};
+
 template<>
 struct CanProxyAdaptor<TagType> : public CanProxyBase<TagType> {
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(TagDecl *, getDecl)
@@ -655,7 +667,8 @@ struct CanProxyAdaptor<TemplateTypeParmType>
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(unsigned, getDepth)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(unsigned, getIndex)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isParameterPack)
-  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(IdentifierInfo *, getName)
+  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(TemplateTypeParmDecl *, getDecl)
+  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(IdentifierInfo *, getIdentifier)
 };
 
 template<>
@@ -739,6 +752,13 @@ CanProxy<U> CanQual<T>::getAs() const {
     return CanQual<U>::CreateUnsafe(Stored);
 
   return CanProxy<U>();
+}
+
+template<typename T>
+template<typename U>
+CanProxy<U> CanQual<T>::castAs() const {
+  assert(!Stored.isNull() && isa<U>(Stored.getTypePtr()));
+  return CanQual<U>::CreateUnsafe(Stored);
 }
 
 template<typename T>

@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 %s -triple=thumbv7-apple-darwin3.0.0-iphoneos -fno-use-cxa-atexit -target-abi apcs-gnu -emit-llvm -o - -fexceptions | FileCheck %s
+// RUN: %clang_cc1 %s -triple=thumbv7-apple-ios3.0 -fno-use-cxa-atexit -target-abi apcs-gnu -emit-llvm -o - -fexceptions | FileCheck %s
 
 // CHECK: @_ZZN5test74testEvE1x = internal global i32 0, align 4
 // CHECK: @_ZGVZN5test74testEvE1x = internal global i32 0
@@ -20,8 +20,16 @@ public:
 
 // The global dtor needs the right calling conv with -fno-use-cxa-atexit
 // rdar://7817590
-// Checked at end of file.
 bar baz;
+
+// PR9593
+// Make sure atexit(3) is used for global dtors.
+
+// CHECK:      call [[BAR:%.*]]* @_ZN3barC1Ev(
+// CHECK-NEXT: call i32 @atexit(void ()* @__dtor_baz)
+
+// CHECK: define internal void @__dtor_baz()
+// CHECK: call [[BAR]]* @_ZN3barD1Ev([[BAR]]* @baz)
 
 // Destructors and constructors must return this.
 namespace test1 {
@@ -45,24 +53,18 @@ namespace test1 {
   }
 
   // CHECK: define linkonce_odr [[A]]* @_ZN5test11AC1Ei([[A]]* %this, i32 %i) unnamed_addr
-  // CHECK:   [[RET:%.*]] = alloca [[A]]*, align 4
   // CHECK:   [[THIS:%.*]] = alloca [[A]]*, align 4
   // CHECK:   store [[A]]* {{.*}}, [[A]]** [[THIS]]
   // CHECK:   [[THIS1:%.*]] = load [[A]]** [[THIS]]
-  // CHECK:   store [[A]]* [[THIS1]], [[A]]** [[RET]]
   // CHECK:   call [[A]]* @_ZN5test11AC2Ei(
-  // CHECK:   [[THIS2:%.*]] = load [[A]]** [[RET]]
-  // CHECK:   ret [[A]]* [[THIS2]]
+  // CHECK:   ret [[A]]* [[THIS1]]
 
   // CHECK: define linkonce_odr [[A]]* @_ZN5test11AD1Ev([[A]]* %this) unnamed_addr
-  // CHECK:   [[RET:%.*]] = alloca [[A]]*, align 4
   // CHECK:   [[THIS:%.*]] = alloca [[A]]*, align 4
   // CHECK:   store [[A]]* {{.*}}, [[A]]** [[THIS]]
   // CHECK:   [[THIS1:%.*]] = load [[A]]** [[THIS]]
-  // CHECK:   store [[A]]* [[THIS1]], [[A]]** [[RET]]
   // CHECK:   call [[A]]* @_ZN5test11AD2Ev(
-  // CHECK:   [[THIS2:%.*]] = load [[A]]** [[RET]]
-  // CHECK:   ret [[A]]* [[THIS2]]
+  // CHECK:   ret [[A]]* [[THIS1]]
 }
 
 // Awkward virtual cases.
@@ -117,7 +119,8 @@ namespace test3 {
     // CHECK: [[N:%.*]] = load i32*
     // CHECK: @llvm.umul.with.overflow.i32(i32 [[N]], i32 4)
     // CHECK: @llvm.uadd.with.overflow.i32(i32 {{.*}}, i32 8)
-    // CHECK: [[SZ:%.*]] = select
+    // CHECK: [[OR:%.*]] = or i1
+    // CHECK: [[SZ:%.*]] = select i1 [[OR]]
     // CHECK: call noalias i8* @_Znam(i32 [[SZ]])
     // CHECK: store i32 4
     // CHECK: store i32 [[N]]
@@ -135,8 +138,8 @@ namespace test3 {
   void d(int n) {
     // CHECK: define void @_ZN5test31dEi(
     // CHECK: [[N:%.*]] = load i32*
-    // CHECK: [[NE:%.*]] = mul i32 [[N]], 20
     // CHECK: @llvm.umul.with.overflow.i32(i32 [[N]], i32 80)
+    // CHECK: [[NE:%.*]] = mul i32 [[N]], 20
     // CHECK: @llvm.uadd.with.overflow.i32(i32 {{.*}}, i32 8)
     // CHECK: [[SZ:%.*]] = select
     // CHECK: call noalias i8* @_Znam(i32 [[SZ]])
@@ -207,8 +210,8 @@ namespace test4 {
   void d(int n) {
     // CHECK: define void @_ZN5test41dEi(
     // CHECK: [[N:%.*]] = load i32*
-    // CHECK: [[NE:%.*]] = mul i32 [[N]], 20
     // CHECK: @llvm.umul.with.overflow.i32(i32 [[N]], i32 80)
+    // CHECK: [[NE:%.*]] = mul i32 [[N]], 20
     // CHECK: @llvm.uadd.with.overflow.i32(i32 {{.*}}, i32 8)
     // CHECK: [[SZ:%.*]] = select
     // CHECK: call noalias i8* @_Znam(i32 [[SZ]])
@@ -307,9 +310,10 @@ namespace test7 {
     // CHECK:      ret void
     static int x = foo();
 
-    // CHECK:      call i8* @llvm.eh.exception()
+    // CHECK:      landingpad { i8*, i32 } personality i8* bitcast (i32 (...)* @__gxx_personality_v0 to i8*)
+    // CHECK-NEXT:   cleanup
     // CHECK:      call void @__cxa_guard_abort(i32* @_ZGVZN5test74testEvE1x)
-    // CHECK:      call void @_Unwind_Resume_or_Rethrow
+    // CHECK:      resume { i8*, i32 }
   }
 }
 
@@ -346,9 +350,10 @@ namespace test8 {
     // CHECK:      ret void
     static A x;
 
-    // CHECK:      call i8* @llvm.eh.exception()
+    // CHECK:      landingpad { i8*, i32 } personality i8* bitcast (i32 (...)* @__gxx_personality_v0 to i8*)
+    // CHECK-NEXT:   cleanup
     // CHECK:      call void @__cxa_guard_abort(i32* @_ZGVZN5test84testEvE1x)
-    // CHECK:      call void @_Unwind_Resume_or_Rethrow
+    // CHECK:      resume { i8*, i32 }
   }
 }
 
@@ -360,5 +365,5 @@ namespace test8 {
   // CHECK:   call void @_ZN5test21CD0Ev(
   // CHECK:   ret void
 
-// CHECK: @_GLOBAL__D_a()
-// CHECK: call %class.bar* @_ZN3barD1Ev(%class.bar* @baz)
+// CH_ECK: @_GLOBAL__D_a()
+// CH_ECK: call %class.bar* @_ZN3barD1Ev(%class.bar* @baz)

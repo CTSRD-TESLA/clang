@@ -1,4 +1,6 @@
-// RUN: %clang_cc1 -fsyntax-only -verify -Wconversion -nostdinc -isystem %S/Inputs -triple x86_64-apple-darwin %s -Wno-unreachable-code
+// RUN: %clang_cc1 -fsyntax-only -verify -Wconversion \
+// RUN:   -nostdsysteminc -nobuiltininc -isystem %S/Inputs \
+// RUN:   -triple x86_64-apple-darwin %s -Wno-unreachable-code
 
 #include <conversion.h>
 
@@ -59,53 +61,125 @@ void test0(char c, short s, int i, long l, long long ll) {
 
 char test1(long long ll) {
   return (long long) ll; // expected-warning {{implicit conversion loses integer precision}}
+}
+char test1_a(long long ll) {
   return (long) ll; // expected-warning {{implicit conversion loses integer precision}}
+}
+char test1_b(long long ll) {
   return (int) ll; // expected-warning {{implicit conversion loses integer precision}}
+}
+char test1_c(long long ll) {
   return (short) ll; // expected-warning {{implicit conversion loses integer precision}}
+}
+char test1_d(long long ll) {
   return (char) ll;
+}
+char test1_e(long long ll) {
   return (long long) BIG; // expected-warning {{implicit conversion from 'long long' to 'char' changes value}}
+}
+char test1_f(long long ll) {
   return (long) BIG; // expected-warning {{implicit conversion from 'long' to 'char' changes value}}
+}
+char test1_g(long long ll) {
   return (int) BIG; // expected-warning {{implicit conversion from 'int' to 'char' changes value}}
+}
+char test1_h(long long ll) {
   return (short) BIG; // expected-warning {{implicit conversion from 'short' to 'char' changes value}}
+}
+char test1_i(long long ll) {
   return (char) BIG;
 }
 
 short test2(long long ll) {
   return (long long) ll; // expected-warning {{implicit conversion loses integer precision}}
+}
+short test2_a(long long ll) {
   return (long) ll; // expected-warning {{implicit conversion loses integer precision}}
+}
+short test2_b(long long ll) {
   return (int) ll; // expected-warning {{implicit conversion loses integer precision}}
+}
+short test2_c(long long ll) {
   return (short) ll;
+}
+short test2_d(long long ll) {
   return (char) ll;
+}
+short test2_e(long long ll) {
   return (long long) BIG;  // expected-warning {{implicit conversion from 'long long' to 'short' changes value}}
+}
+short test2_f(long long ll) {
   return (long) BIG;  // expected-warning {{implicit conversion from 'long' to 'short' changes value}}
+}
+short test2_g(long long ll) {
   return (int) BIG;  // expected-warning {{implicit conversion from 'int' to 'short' changes value}}
+}
+short test2_h(long long ll) {
   return (short) BIG;
+}
+short test2_i(long long ll) {
   return (char) BIG;
 }
 
 int test3(long long ll) {
   return (long long) ll;  // expected-warning {{implicit conversion loses integer precision}}
+}
+int test3_b(long long ll) {
   return (long) ll;  // expected-warning {{implicit conversion loses integer precision}}
+}
+int test3_c(long long ll) {
   return (int) ll;
+}
+int test3_d(long long ll) {
   return (short) ll;
+}
+int test3_e(long long ll) {
   return (char) ll;
+}
+int test3_f(long long ll) {
   return (long long) BIG;  // expected-warning {{implicit conversion from 'long long' to 'int' changes value}}
+}
+int test3_g(long long ll) {
   return (long) BIG; // expected-warning {{implicit conversion from 'long' to 'int' changes value}}
+}
+int test3_h(long long ll) {
   return (int) BIG;
+}
+int test3_i(long long ll) {
   return (short) BIG;
+}
+int test3_j(long long ll) {
   return (char) BIG;
 }
 
 long test4(long long ll) {
   return (long long) ll;
+}
+long test4_a(long long ll) {
   return (long) ll;
+}
+long test4_b(long long ll) {
   return (int) ll;
+}
+long test4_c(long long ll) {
   return (short) ll;
+}
+long test4_d(long long ll) {
   return (char) ll;
+}
+long test4_e(long long ll) {
   return (long long) BIG;
+}
+long test4_f(long long ll) {
   return (long) BIG;
+}
+long test4_g(long long ll) {
   return (int) BIG;
+}
+long test4_h(long long ll) {
   return (short) BIG;
+}
+long test4_i(long long ll) {
   return (char) BIG;
 }
 
@@ -323,6 +397,10 @@ void test_8559831(enum E8559831b value_a, E8559831c value_c) {
   enum E8559831a a1 = value_a; // expected-warning{{implicit conversion from enumeration type 'enum E8559831b' to different enumeration type 'enum E8559831a'}}
   a1 = value_a; // expected-warning{{implicit conversion from enumeration type 'enum E8559831b' to different enumeration type 'enum E8559831a'}}
 
+  test_8559831_a(E8559831b_val); // expected-warning{{implicit conversion from enumeration type 'enum E8559831b' to different enumeration type 'enum E8559831a'}}
+  enum E8559831a a1a = E8559831b_val; // expected-warning{{implicit conversion from enumeration type 'enum E8559831b' to different enumeration type 'enum E8559831a'}}
+  a1 = E8559831b_val; // expected-warning{{implicit conversion from enumeration type 'enum E8559831b' to different enumeration type 'enum E8559831a'}}
+  
   test_8559831_a(value_c); // expected-warning{{implicit conversion from enumeration type 'E8559831c' to different enumeration type 'enum E8559831a'}}
   enum E8559831a a2 = value_c; // expected-warning{{implicit conversion from enumeration type 'E8559831c' to different enumeration type 'enum E8559831a'}}
   a2 = value_c; // expected-warning{{implicit conversion from enumeration type 'E8559831c' to different enumeration type 'enum E8559831a'}}
@@ -330,4 +408,12 @@ void test_8559831(enum E8559831b value_a, E8559831c value_c) {
    test_8559831_a(value_d);
    enum E8559831a a3 = value_d;
    a3 = value_d;
+}
+
+void test26(int si, long sl) {
+  si = sl % sl; // expected-warning {{implicit conversion loses integer precision: 'long' to 'int'}}
+  si = sl % si;
+  si = si % sl;
+  si = si / sl;
+  si = sl / si; // expected-warning {{implicit conversion loses integer precision: 'long' to 'int'}}
 }

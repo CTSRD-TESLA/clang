@@ -15,7 +15,7 @@
 #define LLVM_CLANG_GR_SIMPLE_CONSTRAINT_MANAGER_H
 
 #include "clang/StaticAnalyzer/Core/PathSensitive/ConstraintManager.h"
-#include "clang/StaticAnalyzer/Core/PathSensitive/GRState.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/ProgramState.h"
 
 namespace clang {
 
@@ -23,24 +23,24 @@ namespace ento {
 
 class SimpleConstraintManager : public ConstraintManager {
   SubEngine &SU;
+  BasicValueFactory &BVF;
 public:
-  SimpleConstraintManager(SubEngine &subengine) : SU(subengine) {}
+  SimpleConstraintManager(SubEngine &subengine, BasicValueFactory &BV)
+    : SU(subengine), BVF(BV) {}
   virtual ~SimpleConstraintManager();
 
   //===------------------------------------------------------------------===//
   // Common implementation for the interface provided by ConstraintManager.
   //===------------------------------------------------------------------===//
 
-  bool canReasonAbout(SVal X) const;
-
-  const GRState *assume(const GRState *state, DefinedSVal Cond,
+  ProgramStateRef assume(ProgramStateRef state, DefinedSVal Cond,
                         bool Assumption);
 
-  const GRState *assume(const GRState *state, Loc Cond, bool Assumption);
+  ProgramStateRef assume(ProgramStateRef state, Loc Cond, bool Assumption);
 
-  const GRState *assume(const GRState *state, NonLoc Cond, bool Assumption);
+  ProgramStateRef assume(ProgramStateRef state, NonLoc Cond, bool Assumption);
 
-  const GRState *assumeSymRel(const GRState *state,
+  ProgramStateRef assumeSymRel(ProgramStateRef state,
                               const SymExpr *LHS,
                               BinaryOperator::Opcode op,
                               const llvm::APSInt& Int);
@@ -53,27 +53,27 @@ protected:
 
   // Each of these is of the form "$sym+Adj <> V", where "<>" is the comparison
   // operation for the method being invoked.
-  virtual const GRState *assumeSymNE(const GRState *state, SymbolRef sym,
+  virtual ProgramStateRef assumeSymNE(ProgramStateRef state, SymbolRef sym,
                                      const llvm::APSInt& V,
                                      const llvm::APSInt& Adjustment) = 0;
 
-  virtual const GRState *assumeSymEQ(const GRState *state, SymbolRef sym,
+  virtual ProgramStateRef assumeSymEQ(ProgramStateRef state, SymbolRef sym,
                                      const llvm::APSInt& V,
                                      const llvm::APSInt& Adjustment) = 0;
 
-  virtual const GRState *assumeSymLT(const GRState *state, SymbolRef sym,
+  virtual ProgramStateRef assumeSymLT(ProgramStateRef state, SymbolRef sym,
                                      const llvm::APSInt& V,
                                      const llvm::APSInt& Adjustment) = 0;
 
-  virtual const GRState *assumeSymGT(const GRState *state, SymbolRef sym,
+  virtual ProgramStateRef assumeSymGT(ProgramStateRef state, SymbolRef sym,
                                      const llvm::APSInt& V,
                                      const llvm::APSInt& Adjustment) = 0;
 
-  virtual const GRState *assumeSymLE(const GRState *state, SymbolRef sym,
+  virtual ProgramStateRef assumeSymLE(ProgramStateRef state, SymbolRef sym,
                                      const llvm::APSInt& V,
                                      const llvm::APSInt& Adjustment) = 0;
 
-  virtual const GRState *assumeSymGE(const GRState *state, SymbolRef sym,
+  virtual ProgramStateRef assumeSymGE(ProgramStateRef state, SymbolRef sym,
                                      const llvm::APSInt& V,
                                      const llvm::APSInt& Adjustment) = 0;
 
@@ -81,9 +81,21 @@ protected:
   // Internal implementation.
   //===------------------------------------------------------------------===//
 
-  const GRState *assumeAux(const GRState *state, Loc Cond,bool Assumption);
+  BasicValueFactory &getBasicVals() const { return BVF; }
 
-  const GRState *assumeAux(const GRState *state, NonLoc Cond, bool Assumption);
+  bool canReasonAbout(SVal X) const;
+
+  ProgramStateRef assumeAux(ProgramStateRef state,
+                                Loc Cond,
+                                bool Assumption);
+
+  ProgramStateRef assumeAux(ProgramStateRef state,
+                                NonLoc Cond,
+                                bool Assumption);
+
+  ProgramStateRef assumeAuxForSymbol(ProgramStateRef State,
+                                         SymbolRef Sym,
+                                         bool Assumption);
 };
 
 } // end GR namespace

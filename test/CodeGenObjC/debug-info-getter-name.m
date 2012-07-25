@@ -1,5 +1,7 @@
-// RUN: %clang_cc1 -triple x86_64-apple-darwin10 -fobjc-nonfragile-abi -S -g %s -o %t
-// RUN: grep "\[InstanceVariablesEverywhereButTheInterface someString\]" %t | count 6
+// REQUIRES: x86-64-registered-target
+// RUN: %clang_cc1 -emit-llvm -triple x86_64-apple-darwin10 -fexceptions -fobjc-exceptions -g %s -o - | FileCheck %s
+
+// CHECK: {{.*}}, metadata !"-[InstanceVariablesEverywhereButTheInterface someString]", {{.*}}} ; [ DW_TAG_subprogram ]
 
 //rdar: //8498026
 
@@ -38,6 +40,8 @@
 @end
 
 @implementation AutomaticSynthesis
+@synthesize someString;
+@synthesize someNumber;
 - init
 {
   return self;

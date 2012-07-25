@@ -150,7 +150,7 @@ namespace test6 {
   class B : A {
     public_inner a;
     protected_inner b;
-    private_inner c; // expected-error {{ 'private_inner' is a private member of 'test6::A'}}
+    private_inner c; // expected-error {{'private_inner' is a private member of 'test6::A'}}
   };
 }
 
@@ -166,5 +166,27 @@ namespace test7 {
   };
   void A::check() {
     void foo(int arg[__builtin_offsetof(B, ins)]);
+  }
+}
+
+// rdar://problem/10155256
+namespace test8 {
+  class A {
+    typedef void* (A::*UnspecifiedBoolType)() const;
+    operator UnspecifiedBoolType() const; // expected-note {{implicitly declared private here}}
+  };
+
+  void test(A &a) {
+    if (a) return; // expected-error {{'operator void *(class test8::A::*)(void) const' is a private member of 'test8::A'}}
+  }
+}
+
+namespace test9 {
+  class A {
+    operator char*() const; // expected-note {{implicitly declared private here}}
+  };
+
+  void test(A &a) {
+    delete a; // expected-error {{'operator char *' is a private member of 'test9::A'}}
   }
 }

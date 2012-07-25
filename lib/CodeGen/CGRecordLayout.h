@@ -10,11 +10,13 @@
 #ifndef CLANG_CODEGEN_CGRECORDLAYOUT_H
 #define CLANG_CODEGEN_CGRECORDLAYOUT_H
 
+#include "clang/AST/CharUnits.h"
+#include "clang/AST/Decl.h"
+#include "clang/Basic/LLVM.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/DerivedTypes.h"
-#include "clang/AST/Decl.h"
+
 namespace llvm {
-  class raw_ostream;
   class StructType;
 }
 
@@ -53,7 +55,7 @@ public:
     /// unused as the cleanest IR comes from having a well-constructed LLVM type
     /// with proper GEP instructions, but sometimes its use is required, for
     /// example if an access is intended to straddle an LLVM field boundary.
-    unsigned FieldByteOffset;
+    CharUnits FieldByteOffset;
 
     /// Bit offset in the accessed value to use. The width is implied by \see
     /// TargetBitWidth.
@@ -62,13 +64,8 @@ public:
     /// Bit width of the memory access to perform.
     unsigned AccessWidth;
 
-    /// The alignment of the memory access, or 0 if the default alignment should
-    /// be used.
-    //
-    // FIXME: Remove use of 0 to encode default, instead have IRgen do the right
-    // thing when it generates the code, if avoiding align directives is
-    // desired.
-    unsigned AccessAlignment;
+    /// The alignment of the memory access, assuming the parent is aligned.
+    CharUnits AccessAlignment;
 
     /// Offset for the target value.
     unsigned TargetBitOffset;
@@ -143,7 +140,7 @@ public:
 
   /// @}
 
-  void print(llvm::raw_ostream &OS) const;
+  void print(raw_ostream &OS) const;
   void dump() const;
 
   /// \brief Given a bit-field decl, build an appropriate helper object for
@@ -175,11 +172,11 @@ class CGRecordLayout {
 private:
   /// The LLVM type corresponding to this record layout; used when
   /// laying it out as a complete object.
-  llvm::PATypeHolder CompleteObjectType;
+  llvm::StructType *CompleteObjectType;
 
   /// The LLVM type for the non-virtual part of this record layout;
   /// used when laying it out as a base subobject.
-  llvm::PATypeHolder BaseSubobjectType;
+  llvm::StructType *BaseSubobjectType;
 
   /// Map from (non-bit-field) struct field to the corresponding llvm struct
   /// type field no. This info is populated by record builder.
@@ -207,8 +204,8 @@ private:
   bool IsZeroInitializableAsBase : 1;
 
 public:
-  CGRecordLayout(const llvm::StructType *CompleteObjectType,
-                 const llvm::StructType *BaseSubobjectType,
+  CGRecordLayout(llvm::StructType *CompleteObjectType,
+                 llvm::StructType *BaseSubobjectType,
                  bool IsZeroInitializable,
                  bool IsZeroInitializableAsBase)
     : CompleteObjectType(CompleteObjectType),
@@ -218,14 +215,14 @@ public:
 
   /// \brief Return the "complete object" LLVM type associated with
   /// this record.
-  const llvm::StructType *getLLVMType() const {
-    return cast<llvm::StructType>(CompleteObjectType.get());
+  llvm::StructType *getLLVMType() const {
+    return CompleteObjectType;
   }
 
   /// \brief Return the "base subobject" LLVM type associated with
   /// this record.
-  const llvm::StructType *getBaseSubobjectLLVMType() const {
-    return cast<llvm::StructType>(BaseSubobjectType.get());
+  llvm::StructType *getBaseSubobjectLLVMType() const {
+    return BaseSubobjectType;
   }
 
   /// \brief Check whether this struct can be C++ zero-initialized
@@ -269,7 +266,7 @@ public:
     return it->second;
   }
 
-  void print(llvm::raw_ostream &OS) const;
+  void print(raw_ostream &OS) const;
   void dump() const;
 };
 

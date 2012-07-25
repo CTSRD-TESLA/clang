@@ -1,6 +1,8 @@
 // RUN: %clang_cc1 %s -fsyntax-only -verify 
+// RUN: %clang_cc1 -x objective-c++ %s -fsyntax-only -verify 
 
-// <rdar://problem/6497242> Inherited overridden protocol declared objects don't work
+// rdar://6497242 Inherited overridden protocol declared objects don't work
+// rdar://9740328 Case for c++
 
 @protocol NSObject @end
 @interface NSObject @end
@@ -19,7 +21,7 @@
   id _delegate;
 }
 @property(nonatomic, assign) id<FooDelegate> delegate;
-@property(nonatomic, assign) id<BarDelegate> delegate2;
+@property(nonatomic, assign) id<BarDelegate> delegate2; // expected-note {{property declared here}}
 @end
 @interface Bar : Foo {
 }
@@ -34,7 +36,7 @@
 @interface Base : NSData 
 @property(assign) id ref;
 @property(assign) Base *p_base;
-@property(assign) NSMutableData *p_data;	
+@property(assign) NSMutableData *p_data;	 // expected-note {{property declared here}}
 @end
 
 @interface Data : Base 

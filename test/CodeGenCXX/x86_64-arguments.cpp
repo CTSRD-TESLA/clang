@@ -3,13 +3,13 @@
 // Basic base class test.
 struct f0_s0 { unsigned a; };
 struct f0_s1 : public f0_s0 { void *b; };
-// CHECK: define void @_Z2f05f0_s1(i64 %a0.coerce0, i8* %a0.coerce1)
+// CHECK: define void @_Z2f05f0_s1(i32 %a0.coerce0, i8* %a0.coerce1)
 void f0(f0_s1 a0) { }
 
 // Check with two eight-bytes in base class.
 struct f1_s0 { unsigned a; unsigned b; float c; };
 struct f1_s1 : public f1_s0 { float d;};
-// CHECK: define void @_Z2f15f1_s1(i64 %a0.coerce0, double %a0.coerce1)
+// CHECK: define void @_Z2f15f1_s1(i64 %a0.coerce0, <2 x float> %a0.coerce1)
 void f1(f1_s1 a0) { }
 
 // Check with two eight-bytes in base class and merge.
@@ -54,8 +54,9 @@ namespace PR7742 { // Also rdar://8250764
   
   struct c2 : public s2 {};
   
-  // CHECK: define double @_ZN6PR77423fooEPNS_2c2E(%"struct.PR7742::c2"* %P)
+  // CHECK: define <2 x float> @_ZN6PR77423fooEPNS_2c2E(%"struct.PR7742::c2"* %P)
   c2 foo(c2 *P) {
+    return c2();
   }
   
 }
@@ -114,4 +115,69 @@ namespace test6 {
     return x.x + x.f;
   }
   // CHECK: define i32 @_ZN5test64testENS_5outerE(i64 %x.coerce0, i32 %x.coerce1)
+}
+
+namespace test7 {
+  struct StringRef {char* ptr; long len; };
+  class A { public: ~A(); };
+  A x(A, A, long, long, StringRef) { return A(); }
+  // Check that the StringRef is passed byval instead of expanded
+  // (which would split it between registers and memory).
+  // rdar://problem/9686430
+  // CHECK: define void @_ZN5test71xENS_1AES0_llNS_9StringRefE({{.*}} byval align 8)
+
+  // And a couple extra related tests:
+  A y(A, long double, long, long, StringRef) { return A(); }
+  // CHECK: define void @_ZN5test71yENS_1AEellNS_9StringRefE({{.*}} i8*
+  struct StringDouble {char * ptr; double d;};
+  A z(A, A, A, A, A, StringDouble) { return A(); }
+  A zz(A, A, A, A, StringDouble) { return A(); }
+  // CHECK: define void @_ZN5test71zENS_1AES0_S0_S0_S0_NS_12StringDoubleE({{.*}} byval align 8)
+  // CHECK: define void @_ZN5test72zzENS_1AES0_S0_S0_NS_12StringDoubleE({{.*}} i8*
+}
+
+namespace test8 {
+  // CHECK: declare void @_ZN5test83fooENS_1BE(%"class.test8::B"* byval align 8)
+  class A {
+   char big[17];
+  };
+
+  class B : public A {};
+
+  void foo(B b);
+  void bar() {
+   B b;
+   foo(b);
+  }
+}
+
+// PR4242
+namespace test9 {
+  // Large enough to be passed indirectly.
+  struct S { void *data[3]; };
+
+  struct T { void *data[2]; };
+
+  // CHECK: define void @_ZN5test93fooEPNS_1SEPNS_1TE([[S:%.*]]*, [[T:%.*]]*)
+  void foo(S*, T*) {}
+
+  // CHECK: define void @_ZN5test91aEiiiiNS_1TEPv([[S]]* noalias sret {{%.*}}, i32, i32, i32, i32, [[T]]* byval align 8, i8*)
+  S a(int, int, int, int, T, void*) {
+    return S();
+  }
+
+  // CHECK: define [[S]]* @_ZN5test91bEPNS_1SEiiiiNS_1TEPv([[S]]* {{%.*}}, i32, i32, i32, i32, [[T:%.*]]* byval align 8, i8*)
+  S* b(S* sret, int, int, int, int, T, void*) {
+    return sret;
+  }
+
+  // CHECK: define void @_ZN5test91cEiiiNS_1TEPv([[S]]* noalias sret {{%.*}}, i32, i32, i32, i8* {{%.*}}, i8* {{%.*}}, i8*)
+  S c(int, int, int, T, void*) {
+    return S();
+  }
+
+  // CHECK: define [[S]]* @_ZN5test91dEPNS_1SEiiiNS_1TEPv([[S]]* {{%.*}}, i32, i32, i32, i8* {{%.*}}, i8* {{%.*}}, i8*)
+  S* d(S* sret, int, int, int, T, void*) {
+    return sret;
+  }
 }

@@ -1,4 +1,5 @@
-// RUN: %clang_cc1 -fsyntax-only -verify %s -std=c++0x
+// RUN: %clang_cc1 -fsyntax-only -verify %s -std=c++11
+// RUN: %clang_cc1 -fsyntax-only -verify %s -std=c++98 -Wno-c++11-extensions
 
 template<typename T>
 struct only {
@@ -22,14 +23,21 @@ void f() {
   new const auto (0);
   new (auto) (0.0);
 
-#if 0
-  // When clang supports for-range:
-  for (auto i : {1,2,3}) {
+  int arr[] = {1, 2, 3};
+  for (auto i : arr) {
   }
-
-  // When clang supports inline initialization of members.
-  class X {
-    static const auto &n = 'x';
-  };
-#endif
 }
+
+class X {
+  static const auto n = 'x';
+
+  auto m = 0; // expected-error {{'auto' not allowed in non-static class member}}
+};
+
+struct S {
+  static const auto a; // expected-error {{declaration of variable 'a' with type 'auto const' requires an initializer}}
+  static const auto b = 0;
+  static const int c;
+};
+const int S::b;
+const auto S::c = 0;

@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -triple i386-apple-darwin9 -fsyntax-only -verify %s
+// RUN: %clang_cc1 -triple i386-apple-darwin9 -fobjc-runtime=macosx-fragile-10.5 -fsyntax-only -verify -Wno-objc-root-class %s
 
 @interface I 
 {
@@ -6,13 +6,12 @@
 	int name;
 }
 @property int d1;
-@property id  prop_id; // expected-warning {{no 'assign', 'retain', or 'copy' attribute is specified - 'assign' is assumed}}, expected-warning {{default property attribute 'assign' not appropriate for non-gc object}}
+@property id  prop_id; // expected-warning {{no 'assign', 'retain', or 'copy' attribute is specified - 'assign' is assumed}}, expected-warning {{default property attribute 'assign' not appropriate for non-GC object}}
 @property int name;
 @end
 
 @interface I(CAT)
-@property int d1;	// expected-warning {{property 'd1' requires method 'd1' to be defined }} \
-			// expected-warning {{property 'd1' requires method 'setD1:' to be defined }}
+@property int d1;	// expected-note 2 {{property declared here}}
 @end
 
 @implementation I
@@ -23,7 +22,8 @@
 @synthesize name;	// OK! property with same name as an accessible ivar of same name
 @end
 
-@implementation I(CAT)  // expected-note 2 {{implementation is here}}
+@implementation I(CAT)  // expected-warning {{property 'd1' requires method 'd1' to be defined }} \
+                        // expected-warning {{property 'd1' requires method 'setD1:' to be defined }}
 @synthesize d1;		// expected-error {{@synthesize not allowed in a category's implementation}}
 @dynamic bad;		// expected-error {{property implementation must have its declaration in the category 'CAT'}}
 @end
@@ -63,3 +63,21 @@ typedef id BYObjectIdentifier;
 @property int treeController;  // expected-error {{property has a previous declaration}}
 @end
 
+// rdar://10127639
+@synthesize window; // expected-error {{missing context for property implementation declaration}}
+
+// rdar://10408414
+Class test6_getClass();
+@interface Test6
+@end
+@implementation Test6
++ (float) globalValue { return 5.0f; }
++ (float) gv { return test6_getClass().globalValue; }
+@end
+
+@interface Test7
+@property unsigned length;
+@end
+void test7(Test7 *t) {
+  char data[t.length] = {}; // expected-error {{variable-sized object may not be initialized}}
+}

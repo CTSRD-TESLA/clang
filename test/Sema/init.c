@@ -18,10 +18,19 @@ extern int x;
 void *g = &x;
 int *h = &x;
 
+struct union_crash
+{
+    union
+    {
+    };
+};
+
 int test() {
-int a[10];
-int b[10] = a; // expected-error {{array initializer must be an initializer list}}
-int +; // expected-error {{expected identifier or '('}}
+  int a[10];
+  int b[10] = a; // expected-error {{array initializer must be an initializer list}}
+  int +; // expected-error {{expected identifier or '('}}
+
+  struct union_crash u = { .d = 1 }; // expected-error {{field designator 'd' does not refer to any field in type 'struct union_crash'}}
 }
 
 
@@ -144,3 +153,7 @@ int PR4386_b = ((void *) PR4386_foo) != 0; // expected-error{{initializer elemen
 int PR4386_c = ((void *) PR4386_zed) != 0;
 int PR4386_zed() __attribute((weak));
 
+// <rdar://problem/10185490> (derived from SPEC vortex benchmark)
+typedef char strty[10];
+struct vortexstruct { strty s; };
+struct vortexstruct vortexvar = { "asdf" };

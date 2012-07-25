@@ -1,10 +1,10 @@
 // RUN: %clang_cc1 %s -verify -fsyntax-only
 
-int f() __attribute__((deprecated));
+int f() __attribute__((deprecated)); // expected-note {{declared here}}
 void g() __attribute__((deprecated));
-void g();
+void g(); // expected-note {{declared here}}
 
-extern int var __attribute__((deprecated));
+extern int var __attribute__((deprecated)); // expected-note {{declared here}}
 
 int a() {
   int (*ptr)() = f; // expected-warning {{'f' is deprecated}}
@@ -17,7 +17,7 @@ int a() {
 }
 
 // test if attributes propagate to variables
-extern int var;
+extern int var; // expected-note {{declared here}}
 int w() {
   return var; // expected-warning {{'var' is deprecated}}
 }
@@ -32,18 +32,20 @@ int old_fn() {
 
 
 struct foo {
-  int x __attribute__((deprecated));
+  int x __attribute__((deprecated)); // expected-note {{declared here}}
 };
 
 void test1(struct foo *F) {
   ++F->x;  // expected-warning {{'x' is deprecated}}
+  struct foo f1 = { .x = 17 }; // expected-warning {{'x' is deprecated}}
+  struct foo f2 = { 17 }; // expected-warning {{'x' is deprecated}}
 }
 
-typedef struct foo foo_dep __attribute__((deprecated));
+typedef struct foo foo_dep __attribute__((deprecated)); // expected-note 3 {{declared here}}
 foo_dep *test2;    // expected-warning {{'foo_dep' is deprecated}}
 
-struct bar_dep __attribute__((deprecated, 
-                              invalid_attribute));  // expected-warning {{unknown attribute 'invalid_attribute' ignored}}
+struct __attribute__((deprecated, 
+                      invalid_attribute)) bar_dep ;  // expected-warning {{unknown attribute 'invalid_attribute' ignored}}
 
 struct bar_dep *test3;   // expected-warning {{'bar_dep' is deprecated}}
 
@@ -101,13 +103,13 @@ foo_dep test17, // expected-warning {{'foo_dep' is deprecated}}
 
 // rdar://problem/8518751
 enum __attribute__((deprecated)) Test20 {
-  test20_a __attribute__((deprecated)),
-  test20_b
+  test20_a __attribute__((deprecated)), // expected-note {{declared here}}
+  test20_b // expected-note {{declared here}}
 };
 void test20() {
   enum Test20 f; // expected-warning {{'Test20' is deprecated}}
   f = test20_a; // expected-warning {{'test20_a' is deprecated}}
-  f = test20_b;
+  f = test20_b; // expected-warning {{'test20_b' is deprecated}}
 }
 
 char test21[__has_feature(attribute_deprecated_with_message) ? 1 : -1];

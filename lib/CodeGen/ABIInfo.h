@@ -42,7 +42,8 @@ namespace clang {
       /// type, or by coercing to another specified type stored in
       /// 'CoerceToType').  If an offset is specified (in UIntData), then the
       /// argument passed is offset by some number of bytes in the memory
-      /// representation.
+      /// representation. A dummy argument is emitted before the real argument
+      /// if the specified type stored in "PaddingType" is not zero.
       Direct,
 
       /// Extend - Valid only for integer argument types. Same as 'direct'
@@ -68,22 +69,25 @@ namespace clang {
 
   private:
     Kind TheKind;
-    llvm::PATypeHolder TypeData;
+    llvm::Type *TypeData;
+    llvm::Type *PaddingType; // Currently allowed only for Direct.
     unsigned UIntData;
     bool BoolData0;
     bool BoolData1;
 
-    ABIArgInfo(Kind K, const llvm::Type *TD=0,
-               unsigned UI=0, bool B0 = false, bool B1 = false)
-      : TheKind(K), TypeData(TD), UIntData(UI), BoolData0(B0), BoolData1(B1) {}
+    ABIArgInfo(Kind K, llvm::Type *TD=0, unsigned UI=0,
+               bool B0 = false, bool B1 = false, llvm::Type* P = 0)
+      : TheKind(K), TypeData(TD), PaddingType(P), UIntData(UI), BoolData0(B0),
+        BoolData1(B1) {}
 
   public:
     ABIArgInfo() : TheKind(Direct), TypeData(0), UIntData(0) {}
 
-    static ABIArgInfo getDirect(const llvm::Type *T = 0, unsigned Offset = 0) {
-      return ABIArgInfo(Direct, T, Offset);
+    static ABIArgInfo getDirect(llvm::Type *T = 0, unsigned Offset = 0,
+                                llvm::Type *Padding = 0) {
+      return ABIArgInfo(Direct, T, Offset, false, false, Padding);
     }
-    static ABIArgInfo getExtend(const llvm::Type *T = 0) {
+    static ABIArgInfo getExtend(llvm::Type *T = 0) {
       return ABIArgInfo(Extend, T, 0);
     }
     static ABIArgInfo getIgnore() {
@@ -113,12 +117,17 @@ namespace clang {
       assert((isDirect() || isExtend()) && "Not a direct or extend kind");
       return UIntData;
     }
-    const llvm::Type *getCoerceToType() const {
+
+    llvm::Type *getPaddingType() const {
+      return PaddingType;
+    }
+
+    llvm::Type *getCoerceToType() const {
       assert(canHaveCoerceToType() && "Invalid kind!");
       return TypeData;
     }
 
-    void setCoerceToType(const llvm::Type *T) {
+    void setCoerceToType(llvm::Type *T) {
       assert(canHaveCoerceToType() && "Invalid kind!");
       TypeData = T;
     }

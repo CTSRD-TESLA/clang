@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -emit-llvm %s -o - -triple=x86_64-apple-darwin9 -fblocks -std=c++0x | FileCheck %s
+// RUN: %clang_cc1 -emit-llvm %s -o - -triple=x86_64-apple-darwin9 -fblocks -std=c++11 | FileCheck %s
 struct X { };
 struct Y { };
 
@@ -75,9 +75,6 @@ void f(S3<true>) {}
 
 // CHECK: define void @_Z1f2S3ILb0EE
 void f(S3<false>) {}
-
-// CHECK: define void @_Z2f22S3ILb1EE
-void f2(S3<100>) {}
 
 struct S;
 
@@ -183,7 +180,7 @@ template <typename T> typename T::U ft6(const T&) { return 0; }
 // CHECK: @_Z3ft6I1SENT_1UERKS1_
 template int ft6<S>(const S&);
 
-template<typename> struct __is_scalar {
+template<typename> struct __is_scalar_type {
   enum { __value = 1 };
 };
 
@@ -194,11 +191,11 @@ template<typename T> struct __enable_if<true, T> {
 };
 
 // PR5063
-template<typename T> typename __enable_if<__is_scalar<T>::__value, void>::__type ft7() { }
+template<typename T> typename __enable_if<__is_scalar_type<T>::__value, void>::__type ft7() { }
 
-// CHECK: @_Z3ft7IiEN11__enable_ifIXsr11__is_scalarIT_E7__valueEvE6__typeEv
+// CHECK: @_Z3ft7IiEN11__enable_ifIXsr16__is_scalar_typeIT_EE7__valueEvE6__typeEv
 template void ft7<int>();
-// CHECK: @_Z3ft7IPvEN11__enable_ifIXsr11__is_scalarIT_E7__valueEvE6__typeEv
+// CHECK: @_Z3ft7IPvEN11__enable_ifIXsr16__is_scalar_typeIT_EE7__valueEvE6__typeEv
 template void ft7<void*>();
 
 // PR5144
@@ -225,15 +222,15 @@ struct S7 {
 S7::S7() {}
 
 // PR5063
-template<typename T> typename __enable_if<(__is_scalar<T>::__value), void>::__type ft8() { }
-// CHECK: @_Z3ft8IiEN11__enable_ifIXsr11__is_scalarIT_E7__valueEvE6__typeEv
+template<typename T> typename __enable_if<(__is_scalar_type<T>::__value), void>::__type ft8() { }
+// CHECK: @_Z3ft8IiEN11__enable_ifIXsr16__is_scalar_typeIT_EE7__valueEvE6__typeEv
 template void ft8<int>();
-// CHECK: @_Z3ft8IPvEN11__enable_ifIXsr11__is_scalarIT_E7__valueEvE6__typeEv
+// CHECK: @_Z3ft8IPvEN11__enable_ifIXsr16__is_scalar_typeIT_EE7__valueEvE6__typeEv
 template void ft8<void*>();
 
 // PR5796
 namespace PR5796 {
-template<typename> struct __is_scalar {
+template<typename> struct __is_scalar_type {
   enum { __value = 0 };
 };
 
@@ -241,8 +238,8 @@ template<bool, typename> struct __enable_if {};
 template<typename T> struct __enable_if<true, T> { typedef T __type; };
 template<typename T>
 
-// CHECK: define linkonce_odr void @_ZN6PR57968__fill_aIiEENS_11__enable_ifIXntsrNS_11__is_scalarIT_EE7__valueEvE6__typeEv
-typename __enable_if<!__is_scalar<T>::__value, void>::__type __fill_a() { };
+// CHECK: define linkonce_odr void @_ZN6PR57968__fill_aIiEENS_11__enable_ifIXntsr16__is_scalar_typeIT_EE7__valueEvE6__typeEv
+typename __enable_if<!__is_scalar_type<T>::__value, void>::__type __fill_a() { };
 
 void f() { __fill_a<int>(); }
 }
@@ -348,7 +345,7 @@ namespace test0 {
     char buffer[sizeof(float)];
     g<float>(buffer);
   }
-  // CHECK: define linkonce_odr void @_ZN5test01gIfEEvRAszplcvT__ELf40A00000E_c(
+  // CHECK: define linkonce_odr void @_ZN5test01gIfEEvRAszplcvT__ELf40a00000E_c(
 
   template <class T> void h(char (&buffer)[sizeof(T() + 5.0)]) {}
   void test3() {
@@ -364,6 +361,14 @@ namespace test0 {
     j<A>(buffer);
   }
   // CHECK: define linkonce_odr void @_ZN5test01jINS_1AEEEvRAszdtcvT__E6buffer_c(
+
+  template <class T> void k(char (&buffer)[sizeof(T() + 0.0f)]) {}
+  void test5() {
+    char buffer[sizeof(float)];
+    k<float>(buffer);
+  }
+  // CHECK: define linkonce_odr void @_ZN5test01kIfEEvRAszplcvT__ELf00000000E_c(
+
 }
 
 namespace test1 {
@@ -373,7 +378,7 @@ namespace test1 {
   template void f(X<int>);
 }
 
-// CHECK: define internal void @_Z27functionWithInternalLinkagev()
+// CHECK: define internal void @_ZL27functionWithInternalLinkagev()
 static void functionWithInternalLinkage() {  }
 void g() { functionWithInternalLinkage(); }
 
@@ -390,26 +395,29 @@ namespace test2 {
   // CHECK: define linkonce_odr i32 @_ZN5test211read_memberINS_1AEEEDtptcvPT_Li0E6memberERS2_(
 }
 
+// rdar://problem/9280586
 namespace test3 {
   struct AmbiguousBase { int ab; };
   struct Path1 : AmbiguousBase { float p; };
   struct Path2 : AmbiguousBase { double p; };
   struct Derived : Path1, Path2 { };
 
-  //template <class T> decltype(((T*) 0)->Path1::ab) get_ab_1(T &ref) { return ref.Path1::ab; }
-  //template <class T> decltype(((T*) 0)->Path2::ab) get_ab_2(T &ref) { return ref.Path2::ab; }
+  // CHECK: define linkonce_odr i32 @_ZN5test38get_ab_1INS_7DerivedEEEDtptcvPT_Li0Esr5Path1E2abERS2_(
+  template <class T> decltype(((T*) 0)->Path1::ab) get_ab_1(T &ref) { return ref.Path1::ab; }
 
-  // define weak_odr float @_ZN5test37get_p_1INS_7DerivedEEEDtptcvPT_Li0E5Path11pERS2_(
+  // CHECK: define linkonce_odr i32 @_ZN5test38get_ab_2INS_7DerivedEEEDtptcvPT_Li0Esr5Path2E2abERS2_(
+  template <class T> decltype(((T*) 0)->Path2::ab) get_ab_2(T &ref) { return ref.Path2::ab; }
+
+  // CHECK: define linkonce_odr float @_ZN5test37get_p_1INS_7DerivedEEEDtptcvPT_Li0Esr5Path1E1pERS2_(
   template <class T> decltype(((T*) 0)->Path1::p) get_p_1(T &ref) { return ref.Path1::p; }
 
-  // define weak_odr double @_ZN5test37get_p_1INS_7DerivedEEEDtptcvPT_Li0E5Path21pERS2_(
+  // CHECK: define linkonce_odr double @_ZN5test37get_p_2INS_7DerivedEEEDtptcvPT_Li0Esr5Path2E1pERS2_(
   template <class T> decltype(((T*) 0)->Path2::p) get_p_2(T &ref) { return ref.Path2::p; }
 
   Derived obj;
   void test() {
-    // FIXME: uncomment these when we support diamonds competently
-    //get_ab_1(obj);
-    //get_ab_2(obj);
+    get_ab_1(obj);
+    get_ab_2(obj);
     get_p_1(obj);
     get_p_2(obj);
   }
@@ -530,17 +538,6 @@ namespace test15 {
   template void f<7>(S<7 + e>);
 }
 
-// rdar://problem/8125400.  Don't crash.
-namespace test16 {
-  static union {};
-  static union { union {}; };
-  static union { struct {}; };
-  static union { union { union {}; }; };
-  static union { union { struct {}; }; };
-  static union { struct { union {}; }; };
-  static union { struct { struct {}; }; };
-}
-
 // rdar://problem/8302148
 namespace test17 {
   template <int N> struct A {};
@@ -646,4 +643,212 @@ namespace test23 {
   typedef vpc vpca5[5];
   void f(vpca5 volatile (&)[10]) {}
   // CHECK: define void @_ZN6test231fERA10_A5_VKPv(
+}
+
+namespace test24 {
+  void test0() {
+    extern int foo();
+    // CHECK: call i32 @_ZN6test243fooEv()
+    foo();
+  }
+
+  static char foo() {}
+  void test1() {
+    // CHECK: call signext i8 @_ZN6test24L3fooEv()
+    foo();
+  }
+}
+
+// rdar://problem/8806641
+namespace test25 {
+  template <void (*fn)()> struct A {
+    static void call() { fn(); }
+  };
+  void foo();
+  void test() {
+    // CHECK: call void @_ZN6test251AIXadL_ZNS_3fooEvEEE4callEv()
+    A<foo>::call();
+  }
+}
+
+namespace test26 {
+  template <template <class> class T> void foo(decltype(T<float>::object) &object) {}
+
+  template <class T> struct holder { static T object; };
+
+  void test() {
+    float f;
+
+    // CHECK: call void @_ZN6test263fooINS_6holderEEEvRDtsrT_IfE6objectE(
+    foo<holder>(f);
+  }
+}
+
+namespace test27 {
+  struct A {
+    struct inner {
+      float object;
+    };
+
+    float meth();
+  };
+  typedef A Alias;
+
+  template <class T> void a(decltype(T::inner::object) &object) {}
+  template <class T> void b(decltype(T().Alias::meth()) &object) {}
+
+  void test() {
+    float f;
+    // CHECK: call void @_ZN6test271aINS_1AEEEvRDtsrNT_5innerE6objectE(
+    a<A>(f);
+    // CHECK: call void @_ZN6test271bINS_1AEEEvRDTcldtcvT__Esr5AliasE4methEE(
+    b<A>(f);
+  }
+}
+
+// An injected class name type in a unresolved-name.
+namespace test28 {
+  template <class T> struct A {
+    enum { bit };
+  };
+
+  template <class T> void foo(decltype(A<T>::A::bit) x);
+
+  void test() {
+    foo<char>(A<char>::bit);
+    // CHECK: call void @_ZN6test283fooIcEEvDtsr1AIT_E1AE3bitE(
+  }
+}
+
+// An enclosing template type parameter in an unresolved-name.
+namespace test29 {
+  template <class T> struct A {
+    template <class U> static void foo(decltype(T::fn(U())) x);
+  };
+  struct B { static int fn(int); static long fn(long); };
+
+  void test() {
+    A<B>::foo<int>(0);
+    // CHECK: call void @_ZN6test291AINS_1BEE3fooIiEEvDTclsrS1_2fncvT__EEE(
+  }
+}
+
+// An enclosing template template parameter in an unresolved-name.
+namespace test30 {
+  template <template <class> class T> struct A {
+    template <class U> static void foo(decltype(T<U>::fn()) x);
+  };
+  template <class T> struct B { static T fn(); };
+
+  void test() {
+    A<B>::foo<int>(0);
+    // CHECK: call void @_ZN6test301AINS_1BEE3fooIiEEvDTclsrS1_IT_EE2fnEE(
+  }
+}
+
+namespace test31 { // instantiation-dependent mangling of decltype
+  int x;
+  template<class T> auto f1(T p)->decltype(x) { return 0; }
+  // The return type in the mangling of the template signature
+  // is encoded as "i".
+  template<class T> auto f2(T p)->decltype(p) { return 0; }
+  // The return type in the mangling of the template signature
+  // is encoded as "Dtfp_E".
+  void g(int);
+  template<class T> auto f3(T p)->decltype(g(p)) {}
+
+  // CHECK: define weak_odr i32 @_ZN6test312f1IiEEiT_(
+  template int f1(int);
+  // CHECK: define weak_odr i32 @_ZN6test312f2IiEEDtfp_ET_
+  template int f2(int);
+  // CHECK: define weak_odr void @_ZN6test312f3IiEEDTcl1gfp_EET_
+  template void f3(int);
+}
+
+// PR10205
+namespace test32 {
+  template<typename T, int=T::value> struct A {
+    typedef int type;
+  };
+  struct B { enum { value = 4 }; };
+
+  template <class T> typename A<T>::type foo() { return 0; }
+  void test() {
+    foo<B>();
+    // CHECK: call i32 @_ZN6test323fooINS_1BEEENS_1AIT_XsrS3_5valueEE4typeEv()
+  }
+}
+
+namespace test33 {
+  template <class T> struct X {
+    enum { value = T::value };
+  };
+
+  template<typename T, int=X<T>::value> struct A {
+    typedef int type;
+  };
+  struct B { enum { value = 4 }; };
+
+  template <class T> typename A<T>::type foo() { return 0; }
+
+  void test() {
+    foo<B>();
+    // CHECK: call i32 @_ZN6test333fooINS_1BEEENS_1AIT_Xsr1XIS3_EE5valueEE4typeEv()
+  }
+}
+
+namespace test34 {
+  // Mangling for instantiation-dependent decltype expressions.
+  template<typename T>
+  void f(decltype(sizeof(decltype(T() + T())))) {}
+
+  // CHECK: define weak_odr void @_ZN6test341fIiEEvDTstDTplcvT__EcvS1__EEE
+  template void f<int>(decltype(sizeof(1)));
+
+  // Mangling for non-instantiation-dependent sizeof expressions.
+  template<unsigned N>
+  void f2(int (&)[N + sizeof(int*)]) {}
+
+  // CHECK: define weak_odr void @_ZN6test342f2ILj4EEEvRAplT_Lm8E_i
+  template void f2<4>(int (&)[4 + sizeof(int*)]);
+
+  // Mangling for non-instantiation-dependent sizeof expressions
+  // involving an implicit conversion of the result of the sizeof.
+  template<unsigned long long N>
+  void f3(int (&)[N + sizeof(int*)]) {}
+
+  // CHECK: define weak_odr void @_ZN6test342f3ILy4EEEvRAplT_Ly8E_i
+  template void f3<4>(int (&)[4 + sizeof(int*)]);
+
+  // Mangling for instantiation-dependent sizeof() expressions as
+  // template arguments.
+  template<unsigned> struct A { };
+
+  template<typename T> void f4(::test34::A<sizeof(sizeof(decltype(T() + T())))>) { }
+
+  // CHECK: define weak_odr void @_ZN6test342f4IiEEvNS_1AIXszstDTplcvT__EcvS2__EEEEE
+  template void f4<int>(A<sizeof(sizeof(int))>);
+}
+
+namespace test35 {
+  // Dependent operator names of unknown arity.
+  struct A { 
+    template<typename U> A operator+(U) const;
+  };
+
+  template<typename T>
+  void f1(decltype(sizeof(&T::template operator+<int>))) {}
+
+  // CHECK: define weak_odr void @_ZN6test352f1INS_1AEEEvDTszadsrT_plIiEE
+  template void f1<A>(__SIZE_TYPE__);
+}
+
+namespace test36 {
+  template<unsigned> struct A { };
+
+  template<typename ...Types>
+  auto f1(Types... values) -> A<sizeof...(values)> { }
+
+  // CHECK: define weak_odr {{.*}} @_ZN6test362f1IJifEEENS_1AIXsZfp_EEEDpT_
+  template A<2> f1(int, float);
 }

@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify %s
+// RUN: %clang_cc1 -fsyntax-only -verify -Wno-objc-root-class %s
 // rdar://5986251
 
 @protocol SomeProtocol
@@ -33,3 +33,10 @@ typedef struct objc_class *Class;
 
 Class <SomeProtocol> UnfortunateGCCExtension;
 
+// rdar://10238337
+@protocol Broken @end
+@interface Crash @end
+@implementation Crash
+- (void)crashWith:(<Broken>)a { // expected-warning {{protocol qualifiers without 'id' is archaic}}
+}
+@end

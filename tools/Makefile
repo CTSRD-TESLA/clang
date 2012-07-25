@@ -8,12 +8,9 @@
 ##===----------------------------------------------------------------------===##
 
 CLANG_LEVEL := ..
-DIRS := driver libclang c-index-test
+DIRS := driver libclang c-index-test arcmt-test c-arcmt-test diagtool \
+        clang-check clang-ast-dump
 
 include $(CLANG_LEVEL)/../../Makefile.config
-
-ifeq ($(OS), $(filter $(OS), Minix))
-DIRS := $(filter-out libclang c-index-test, $(DIRS))
-endif
 
 include $(CLANG_LEVEL)/Makefile

@@ -15,13 +15,10 @@
 #ifndef LLVM_CLANG_GR_RVALUE_H
 #define LLVM_CLANG_GR_RVALUE_H
 
+#include "clang/Basic/LLVM.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/SymbolManager.h"
-#include "llvm/Support/Casting.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/ProgramState_Fwd.h"
 #include "llvm/ADT/ImmutableList.h"
-
-namespace llvm {
-  class raw_ostream;
-}
 
 //==------------------------------------------------------------------------==//
 //  Base SVal types.
@@ -33,12 +30,12 @@ namespace ento {
 
 class CompoundValData;
 class LazyCompoundValData;
-class GRState;
+class ProgramState;
 class BasicValueFactory;
 class MemRegion;
 class TypedRegion;
 class MemRegionManager;
-class GRStateManager;
+class ProgramStateManager;
 class SValBuilder;
 
 /// SVal - This represents a symbolic expression, which can be either
@@ -57,24 +54,23 @@ public:
   enum { BaseBits = 2, BaseMask = 0x3 };
 
 protected:
-  const void* Data;
+  const void *Data;
 
   /// The lowest 2 bits are a BaseKind (0 -- 3).
   ///  The higher bits are an unsigned "kind" value.
   unsigned Kind;
 
-  explicit SVal(const void* d, bool isLoc, unsigned ValKind)
+  explicit SVal(const void *d, bool isLoc, unsigned ValKind)
   : Data(d), Kind((isLoc ? LocKind : NonLocKind) | (ValKind << BaseBits)) {}
 
-  explicit SVal(BaseKind k, const void* D = NULL)
+  explicit SVal(BaseKind k, const void *D = NULL)
     : Data(D), Kind(k) {}
 
 public:
   explicit SVal() : Data(0), Kind(0) {}
-  ~SVal() {}
 
   /// BufferTy - A temporary buffer to hold a set of SVals.
-  typedef llvm::SmallVector<SVal,5> BufferTy;
+  typedef SmallVector<SVal,5> BufferTy;
 
   inline unsigned getRawKind() const { return Kind; }
   inline BaseKind getBaseKind() const { return (BaseKind) (Kind & BaseMask); }
@@ -123,52 +119,41 @@ public:
   /// getAsFunctionDecl - If this SVal is a MemRegionVal and wraps a
   /// CodeTextRegion wrapping a FunctionDecl, return that FunctionDecl.
   /// Otherwise return 0.
-  const FunctionDecl* getAsFunctionDecl() const;
+  const FunctionDecl *getAsFunctionDecl() const;
 
-  /// getAsLocSymbol - If this SVal is a location (subclasses Loc) and
-  ///  wraps a symbol, return that SymbolRef.  Otherwise return NULL.
+  /// If this SVal is a location (subclasses Loc) and
+  /// wraps a symbol, return that SymbolRef.  Otherwise return 0.
   SymbolRef getAsLocSymbol() const;
 
   /// Get the symbol in the SVal or its base region.
   SymbolRef getLocSymbolInBase() const;
 
-  /// getAsSymbol - If this Sval wraps a symbol return that SymbolRef.
-  ///  Otherwise return a SymbolRef where 'isValid()' returns false.
+  /// If this SVal wraps a symbol return that SymbolRef.
+  /// Otherwise, return 0.
   SymbolRef getAsSymbol() const;
 
   /// getAsSymbolicExpression - If this Sval wraps a symbolic expression then
   ///  return that expression.  Otherwise return NULL.
   const SymExpr *getAsSymbolicExpression() const;
 
+  const SymExpr* getAsSymExpr() const;
+
   const MemRegion *getAsRegion() const;
 
-  void dumpToStream(llvm::raw_ostream& OS) const;
+  void dumpToStream(raw_ostream &OS) const;
   void dump() const;
 
-  // Iterators.
-  class symbol_iterator {
-    llvm::SmallVector<const SymExpr*, 5> itr;
-    void expand();
-  public:
-    symbol_iterator() {}
-    symbol_iterator(const SymExpr* SE);
-
-    symbol_iterator& operator++();
-    SymbolRef operator*();
-
-    bool operator==(const symbol_iterator& X) const;
-    bool operator!=(const symbol_iterator& X) const;
-  };
-
-  symbol_iterator symbol_begin() const {
+  SymExpr::symbol_iterator symbol_begin() const {
     const SymExpr *SE = getAsSymbolicExpression();
     if (SE)
-      return symbol_iterator(SE);
+      return SE->symbol_begin();
     else
-      return symbol_iterator();
+      return SymExpr::symbol_iterator();
   }
 
-  symbol_iterator symbol_end() const { return symbol_iterator(); }
+  SymExpr::symbol_iterator symbol_end() const { 
+    return SymExpr::symbol_end();
+  }
 
   // Implement isa<T> support.
   static inline bool classof(const SVal*) { return true; }
@@ -178,13 +163,13 @@ public:
 class UndefinedVal : public SVal {
 public:
   UndefinedVal() : SVal(UndefinedKind) {}
-  UndefinedVal(const void* D) : SVal(UndefinedKind, D) {}
+  UndefinedVal(const void *D) : SVal(UndefinedKind, D) {}
 
   static inline bool classof(const SVal* V) {
     return V->getBaseKind() == UndefinedKind;
   }
 
-  const void* getData() const { return Data; }
+  const void *getData() const { return Data; }
 };
 
 class DefinedOrUnknownSVal : public SVal {
@@ -195,7 +180,7 @@ private:
   bool isValid() const;
   
 protected:
-  explicit DefinedOrUnknownSVal(const void* d, bool isLoc, unsigned ValKind)
+  explicit DefinedOrUnknownSVal(const void *d, bool isLoc, unsigned ValKind)
     : SVal(d, isLoc, ValKind) {}
   
   explicit DefinedOrUnknownSVal(BaseKind k, void *D = NULL)
@@ -225,7 +210,7 @@ private:
   bool isUnknownOrUndef() const;
   bool isValid() const;  
 protected:
-  explicit DefinedSVal(const void* d, bool isLoc, unsigned ValKind)
+  explicit DefinedSVal(const void *d, bool isLoc, unsigned ValKind)
     : DefinedOrUnknownSVal(d, isLoc, ValKind) {}
 public:
   // Implement isa<T> support.
@@ -236,11 +221,11 @@ public:
 
 class NonLoc : public DefinedSVal {
 protected:
-  explicit NonLoc(unsigned SubKind, const void* d)
+  explicit NonLoc(unsigned SubKind, const void *d)
     : DefinedSVal(d, false, SubKind) {}
 
 public:
-  void dumpToStream(llvm::raw_ostream& Out) const;
+  void dumpToStream(raw_ostream &Out) const;
 
   // Implement isa<T> support.
   static inline bool classof(const SVal* V) {
@@ -250,11 +235,11 @@ public:
 
 class Loc : public DefinedSVal {
 protected:
-  explicit Loc(unsigned SubKind, const void* D)
+  explicit Loc(unsigned SubKind, const void *D)
   : DefinedSVal(const_cast<void*>(D), true, SubKind) {}
 
 public:
-  void dumpToStream(llvm::raw_ostream& Out) const;
+  void dumpToStream(raw_ostream &Out) const;
 
   Loc(const Loc& X) : DefinedSVal(X.Data, true, X.getSubKind()) {}
 
@@ -278,12 +263,17 @@ namespace nonloc {
 enum Kind { ConcreteIntKind, SymbolValKind, SymExprValKind,
             LocAsIntegerKind, CompoundValKind, LazyCompoundValKind };
 
+/// \brief Represents symbolic expression.
 class SymbolVal : public NonLoc {
 public:
   SymbolVal(SymbolRef sym) : NonLoc(SymbolValKind, sym) {}
 
   SymbolRef getSymbol() const {
-    return (const SymbolData*) Data;
+    return (const SymExpr*) Data;
+  }
+
+  bool isExpression() {
+    return !isa<SymbolData>(getSymbol());
   }
 
   static inline bool classof(const SVal* V) {
@@ -296,25 +286,7 @@ public:
   }
 };
 
-class SymExprVal : public NonLoc {
-public:
-  explicit SymExprVal(const SymExpr *SE)
-    : NonLoc(SymExprValKind, reinterpret_cast<const void*>(SE)) {}
-
-  const SymExpr *getSymbolicExpression() const {
-    return reinterpret_cast<const SymExpr*>(Data);
-  }
-
-  static inline bool classof(const SVal* V) {
-    return V->getBaseKind() == NonLocKind &&
-           V->getSubKind() == SymExprValKind;
-  }
-
-  static inline bool classof(const NonLoc* V) {
-    return V->getSubKind() == SymExprValKind;
-  }
-};
-
+/// \brief Value representing integer constant.
 class ConcreteInt : public NonLoc {
 public:
   explicit ConcreteInt(const llvm::APSInt& V) : NonLoc(ConcreteIntKind, &V) {}
@@ -353,16 +325,22 @@ class LocAsInteger : public NonLoc {
 public:
 
   Loc getLoc() const {
-    return cast<Loc>(((std::pair<SVal, uintptr_t>*) Data)->first);
+    const std::pair<SVal, uintptr_t> *D =
+      static_cast<const std::pair<SVal, uintptr_t> *>(Data);
+    return cast<Loc>(D->first);
   }
 
   const Loc& getPersistentLoc() const {
-    const SVal& V = ((std::pair<SVal, uintptr_t>*) Data)->first;
+    const std::pair<SVal, uintptr_t> *D =
+      static_cast<const std::pair<SVal, uintptr_t> *>(Data);
+    const SVal& V = D->first;
     return cast<Loc>(V);
   }
 
   unsigned getNumBits() const {
-    return ((std::pair<SVal, unsigned>*) Data)->second;
+    const std::pair<SVal, uintptr_t> *D =
+      static_cast<const std::pair<SVal, uintptr_t> *>(Data);
+    return D->second;
   }
 
   // Implement isa<T> support.
@@ -428,7 +406,7 @@ public:
 
 namespace loc {
 
-enum Kind { GotoLabelKind, MemRegionKind, ConcreteIntKind, ObjCPropRefKind };
+enum Kind { GotoLabelKind, MemRegionKind, ConcreteIntKind };
 
 class GotoLabel : public Loc {
 public:
@@ -452,10 +430,12 @@ class MemRegionVal : public Loc {
 public:
   explicit MemRegionVal(const MemRegion* r) : Loc(MemRegionKind, r) {}
 
+  /// \brief Get the underlining region.
   const MemRegion* getRegion() const {
     return static_cast<const MemRegion*>(Data);
   }
 
+  /// \brief Get the underlining region and strip casts.
   const MemRegion* stripCasts() const;
 
   template <typename REGION>
@@ -505,35 +485,13 @@ public:
   }
 };
 
-/// \brief Pseudo-location SVal used by the ExprEngine to simulate a "load" or
-/// "store" of an ObjC property for the dot syntax.
-class ObjCPropRef : public Loc {
-public:
-  explicit ObjCPropRef(const ObjCPropertyRefExpr *E)
-    : Loc(ObjCPropRefKind, E) {}
-
-  const ObjCPropertyRefExpr *getPropRefExpr() const {
-    return static_cast<const ObjCPropertyRefExpr *>(Data);
-  }
-
-  // Implement isa<T> support.
-  static inline bool classof(const SVal* V) {
-    return V->getBaseKind() == LocKind &&
-           V->getSubKind() == ObjCPropRefKind;
-  }
-
-  static inline bool classof(const Loc* V) {
-    return V->getSubKind() == ObjCPropRefKind;
-  }
-};
-
 } // end ento::loc namespace
 } // end GR namespace
 
 } // end clang namespace
 
 namespace llvm {
-static inline llvm::raw_ostream& operator<<(llvm::raw_ostream& os,
+static inline raw_ostream &operator<<(raw_ostream &os,
                                             clang::ento::SVal V) {
   V.dumpToStream(os);
   return os;

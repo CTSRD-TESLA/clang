@@ -1,4 +1,16 @@
-// RUN: %clang_cc1 -triple i386-apple-darwin10 -analyze -analyzer-checker=core.experimental.SecuritySyntactic %s -verify
+// RUN: %clang_cc1 -triple i386-apple-darwin10 -analyze -analyzer-checker=security.insecureAPI,security.FloatLoopCounter %s -verify
+// RUN: %clang_cc1 -triple i386-apple-darwin10 -analyze -DUSE_BUILTINS -analyzer-checker=security.insecureAPI,security.FloatLoopCounter %s -verify
+// RUN: %clang_cc1 -triple i386-apple-darwin10 -analyze -DVARIANT -analyzer-checker=security.insecureAPI,security.FloatLoopCounter %s -verify
+// RUN: %clang_cc1 -triple i386-apple-darwin10 -analyze -DUSE_BUILTINS -DVARIANT -analyzer-checker=security.insecureAPI,security.FloatLoopCounter %s -verify
+
+#ifdef USE_BUILTINS
+# define BUILTIN(f) __builtin_ ## f
+#else /* USE_BUILTINS */
+# define BUILTIN(f) f
+#endif /* USE_BUILTINS */
+
+typedef typeof(sizeof(int)) size_t;
+
 
 // <rdar://problem/6336718> rule request: floating point used as loop 
 //  condition (FLP30-C, FLP-30-CPP)
@@ -103,3 +115,85 @@ char *mktemp(char *buf);
 void test_mktemp() {
   char *x = mktemp("/tmp/zxcv"); // expected-warning{{Call to function 'mktemp' is insecure as it always creates or uses insecure temporary file}}
 }
+
+
+//===----------------------------------------------------------------------===
+// strcpy()
+//===----------------------------------------------------------------------===
+#ifdef VARIANT
+
+#define __strcpy_chk BUILTIN(__strcpy_chk)
+char *__strcpy_chk(char *restrict s1, const char *restrict s2, size_t destlen);
+
+#define strcpy(a,b) __strcpy_chk(a,b,(size_t)-1)
+
+#else /* VARIANT */
+
+#define strcpy BUILTIN(strcpy)
+char *strcpy(char *restrict s1, const char *restrict s2);
+
+#endif /* VARIANT */
+
+void test_strcpy() {
+  char x[4];
+  char *y;
+
+  strcpy(x, y); //expected-warning{{Call to function 'strcpy' is insecure as it does not provide bounding of the memory buffer. Replace unbounded copy functions with analogous functions that support length arguments such as 'strlcpy'. CWE-119.}}
+}
+
+//===----------------------------------------------------------------------===
+// strcat()
+//===----------------------------------------------------------------------===
+#ifdef VARIANT
+
+#define __strcat_chk BUILTIN(__strcat_chk)
+char *__strcat_chk(char *restrict s1, const char *restrict s2, size_t destlen);
+
+#define strcat(a,b) __strcat_chk(a,b,(size_t)-1)
+
+#else /* VARIANT */
+
+#define strcat BUILTIN(strcat)
+char *strcat(char *restrict s1, const char *restrict s2);
+
+#endif /* VARIANT */
+
+void test_strcat() {
+  char x[4];
+  char *y;
+
+  strcat(x, y); //expected-warning{{Call to function 'strcat' is insecure as it does not provide bounding of the memory buffer. Replace unbounded copy functions with analogous functions that support length arguments such as 'strlcat'. CWE-119.}}
+}
+
+//===----------------------------------------------------------------------===
+// vfork()
+//===----------------------------------------------------------------------===
+typedef int __int32_t;
+typedef __int32_t pid_t;
+pid_t vfork(void);
+
+void test_vfork() {
+  vfork(); //expected-warning{{Call to function 'vfork' is insecure as it can lead to denial of service situations in the parent process.}}
+}
+
+//===----------------------------------------------------------------------===
+// mkstemp()
+//===----------------------------------------------------------------------===
+
+char *mkdtemp(char *template);
+int mkstemps(char *template, int suffixlen);
+int mkstemp(char *template);
+char *mktemp(char *template);
+
+void test_mkstemp() {
+  mkstemp("XX"); // expected-warning {{Call to 'mkstemp' should have at least 6 'X's in the format string to be secure (2 'X's seen)}}
+  mkstemp("XXXXXX");
+  mkstemp("XXXXXXX");
+  mkstemps("XXXXXX", 0);
+  mkstemps("XXXXXX", 1); // expected-warning {{5 'X's seen}}
+  mkstemps("XXXXXX", 2); // expected-warning {{Call to 'mkstemps' should have at least 6 'X's in the format string to be secure (4 'X's seen, 2 characters used as a suffix)}}
+  mkdtemp("XX"); // expected-warning {{2 'X's seen}}
+  mkstemp("X"); // expected-warning {{Call to 'mkstemp' should have at least 6 'X's in the format string to be secure (1 'X' seen)}}
+  mkdtemp("XXXXXX");
+}
+

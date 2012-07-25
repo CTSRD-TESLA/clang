@@ -16,3 +16,42 @@ void f(NSArray *a) {
   for (id thisKey in keys);
   for (id thisKey in keys);
 }
+
+/* // rdar://9072298 */
+@protocol NSObject @end
+
+@interface NSObject <NSObject> {
+    Class isa;
+}
+@end
+
+typedef struct {
+    unsigned long state;
+    id *itemsPtr;
+    unsigned long *mutationsPtr;
+    unsigned long extra[5];
+} NSFastEnumerationState;
+
+@protocol NSFastEnumeration
+
+- (unsigned long)countByEnumeratingWithState:(NSFastEnumerationState *)state objects:(id *)stackbuf count:(unsigned long)len;
+
+@end
+
+int main ()
+{
+ NSObject<NSFastEnumeration>* collection = ((void*)0);
+ for (id thing in collection) { }
+
+ return 0;
+}
+
+/* rdar://problem/11068137 */
+@interface Test2
+@property (assign) id prop;
+@end
+void test2(NSObject<NSFastEnumeration> *collection) {
+  Test2 *obj;
+  for (obj.prop in collection) { /* expected-error {{selector element is not a valid lvalue}} */
+  }
+}

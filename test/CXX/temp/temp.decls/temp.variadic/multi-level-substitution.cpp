@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -std=c++0x -fsyntax-only -verify %s
+// RUN: %clang_cc1 -std=c++11 -fsyntax-only -verify %s
 
 template<typename T, T ...Values> struct value_tuple {};
 template<typename...> struct tuple { };
@@ -232,5 +232,63 @@ namespace ExpandingFunctionParameters {
   void test() {
     X1<float> x1;
     x1.f(17, 3.14159);
+  }
+}
+
+namespace PR10230 {
+  template<typename>
+  struct s
+  {
+    template<typename... Args>
+    auto f() -> int(&)[sizeof...(Args)];
+  };
+
+  void main()
+  {
+    int (&ir1)[1] = s<int>().f<int>();
+    int (&ir3)[3] = s<int>().f<int, float, double>();
+  }
+}
+
+namespace PR13386 {
+  template<typename...> struct tuple {};
+  template<typename...T>
+  struct S {
+    template<typename...U>
+    void f(T &&...t, U &&...u) {} // expected-note {{candidate}}
+    template<typename...U>
+    void g(U &&...u, T &&...t) {} // expected-note {{candidate}}
+    template<typename...U>
+    void h(tuple<T, U> &&...) {} // expected-note 2{{candidate}}
+
+    template<typename...U>
+    struct X {
+      template<typename...V>
+      void x(tuple<T, U, V> &&...); // expected-error {{different lengths}}
+    };
+  };
+
+  void test() {
+    S<>().f();
+    S<>().f(0);
+    S<int>().f(0);
+    S<int>().f(0, 1);
+    S<int, int>().f(0); // expected-error {{no matching member function for call}}
+
+    S<>().g();
+    S<>().g(0);
+    S<int>().g(0);
+    S<int>().g(0, 1); // expected-error {{no matching member function for call}}
+    S<int>().g<int>(0, 1);
+    S<int, int>().g(0, 1);
+
+    S<>().h();
+    S<>().h(0); // expected-error {{no matching member function for call}}
+    S<int>().h({}); // expected-error {{no matching member function for call}}
+    S<int>().h<int>({});
+    S<int>().h(tuple<int,int>{});
+    S<int, int>().h(tuple<int,int>{}, tuple<int,int>{});
+
+    S<int, int>::X<char>(); // expected-note {{here}}
   }
 }

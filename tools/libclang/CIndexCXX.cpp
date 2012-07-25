@@ -31,19 +31,23 @@ unsigned clang_isVirtualBase(CXCursor C) {
 }
 
 enum CX_CXXAccessSpecifier clang_getCXXAccessSpecifier(CXCursor C) {
-  if (C.kind != CXCursor_CXXBaseSpecifier)
+  AccessSpecifier spec = AS_none;
+
+  if (C.kind == CXCursor_CXXAccessSpecifier)
+    spec = getCursorDecl(C)->getAccess();
+  else if (C.kind == CXCursor_CXXBaseSpecifier)
+    spec = getCursorCXXBaseSpecifier(C)->getAccessSpecifier();
+  else
     return CX_CXXInvalidAccessSpecifier;
   
-  CXXBaseSpecifier *B = getCursorCXXBaseSpecifier(C);
-  switch (B->getAccessSpecifier()) {
+  switch (spec) {
     case AS_public: return CX_CXXPublic;
     case AS_protected: return CX_CXXProtected;
     case AS_private: return CX_CXXPrivate;
     case AS_none: return CX_CXXInvalidAccessSpecifier;
   }
-  
-  // FIXME: Clang currently thinks this is reachable.
-  return CX_CXXInvalidAccessSpecifier;
+
+  llvm_unreachable("Invalid AccessSpecifier!");
 }
 
 enum CXCursorKind clang_getTemplateCursorKind(CXCursor C) {

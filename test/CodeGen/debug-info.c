@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -o %t -emit-llvm -g %s
+// RUN: %clang_cc1 -triple x86_64-unk-unk -o %t -emit-llvm -g %s
 // RUN: FileCheck --input-file=%t %s
 
 // PR3023
@@ -47,3 +47,15 @@ struct foo2 foo2;
 typedef int barfoo;
 barfoo foo() {
 }
+
+// CHECK: __uint128_t
+__uint128_t foo128 ()
+{
+  __uint128_t int128 = 44;
+  return int128;
+}
+
+// CHECK: uint64x2_t
+typedef unsigned long long uint64_t;
+typedef uint64_t uint64x2_t __attribute__((ext_vector_type(2)));
+uint64x2_t extvectbar[4];

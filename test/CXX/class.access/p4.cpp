@@ -96,7 +96,7 @@ namespace test2 {
   A a; // expected-error {{calling a private constructor}}
   A A::foo; // okay
   
-  class B : A { }; // expected-error {{base class 'test2::A' has private constructor}}
+  class B : A { }; // expected-error {{base class 'test2::A' has private default constructor}}
   B b; // expected-note{{implicit default constructor}}
   
   class C : virtual A { 
@@ -104,7 +104,7 @@ namespace test2 {
     C();
   };
 
-  class D : C { }; // expected-error {{inherited virtual base class 'test2::A' has private constructor}}
+  class D : C { }; // expected-error {{inherited virtual base class 'test2::A' has private default constructor}}
   D d; // expected-note{{implicit default constructor}}
 }
 
@@ -206,7 +206,7 @@ namespace test5 {
 
   class Test1 { A a; }; // expected-error {{private member}}
   void test1() {
-    Test1 a;
+    Test1 a; 
     a = Test1(); // expected-note{{implicit default copy}}
   }
 
@@ -372,7 +372,7 @@ namespace test15 {
     int private_foo; // expected-note {{declared private here}}
     static int private_sfoo; // expected-note {{declared private here}}
   protected:
-    int protected_foo; // expected-note 3 {{declared protected here}} // expected-note {{object type must derive from context type 'test15::B<int>'}}
+    int protected_foo; // expected-note 3 {{declared protected here}} // expected-note {{can only access this member on an object of type 'test15::B<int>'}}
     static int protected_sfoo; // expected-note 3 {{declared protected here}}
 
     int test1(A<int> &a) {
@@ -481,7 +481,7 @@ namespace test21 {
   };
   template <class T> class A<T>::Inner {};
   class B {
-    template <class T> class A<T>::Inner;
+    template <class T> class A<T>::Inner; // expected-error{{non-friend class member 'Inner' cannot have a qualified name}}
   };
 
   void test() {

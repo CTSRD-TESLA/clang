@@ -6,7 +6,7 @@ __attribute ((unavailable))
 Class <FwProto> cFw = 0;  // expected-error {{'FwProto' is unavailable}}
 
 
-__attribute ((deprecated)) @protocol MyProto1
+__attribute ((deprecated)) @protocol MyProto1 // expected-note 5 {{declared here}}
 @end
 
 @protocol Proto2  <MyProto1>  // expected-warning {{'MyProto1' is deprecated}}
@@ -40,7 +40,7 @@ Class <MyProto1> clsP1 = 0;  // expected-warning {{'MyProto1' is deprecated}}
 
 __attribute ((unavailable)) __attribute ((deprecated)) @protocol XProto; // expected-note{{marked unavailable}}
 
-id <XProto> idX = 0; // expected-error {{'XProto' is unavailable}} expected-warning {{'XProto' is deprecated}}
+id <XProto> idX = 0; // expected-error {{'XProto' is unavailable}}
 
 int main ()
 {

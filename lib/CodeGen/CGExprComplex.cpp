@@ -64,11 +64,8 @@ public:
   }
 
   ComplexPairTy EmitLoadOfLValue(LValue LV) {
-    if (LV.isSimple())
-      return EmitLoadOfComplex(LV.getAddress(), LV.isVolatileQualified());
-
-    assert(LV.isPropertyRef() && "Unknown LValue type!");
-    return CGF.EmitLoadOfPropertyRefLValue(LV).getComplexVal();
+    assert(LV.isSimple() && "complex l-value must be simple");
+    return EmitLoadOfComplex(LV.getAddress(), LV.isVolatileQualified());
   }
 
   /// EmitLoadOfComplex - Given a pointer to a complex value, emit code to load
@@ -78,11 +75,8 @@ public:
   /// EmitStoreThroughLValue - Given an l-value of complex type, store
   /// a complex number into it.
   void EmitStoreThroughLValue(ComplexPairTy Val, LValue LV) {
-    if (LV.isSimple())
-      return EmitStoreOfComplex(Val, LV.getAddress(), LV.isVolatileQualified());
-
-    assert(LV.isPropertyRef() && "Unknown LValue type!");
-    CGF.EmitStoreThroughPropertyRefLValue(RValue::getComplex(Val), LV);
+    assert(LV.isSimple() && "complex l-value must be simple");
+    return EmitStoreOfComplex(Val, LV.getAddress(), LV.isVolatileQualified());
   }
 
   /// EmitStoreOfComplex - Store the specified real/imag parts into the
@@ -103,20 +97,32 @@ public:
     
   ComplexPairTy VisitStmt(Stmt *S) {
     S->dump(CGF.getContext().getSourceManager());
-    assert(0 && "Stmt can't have complex result type!");
-    return ComplexPairTy();
+    llvm_unreachable("Stmt can't have complex result type!");
   }
   ComplexPairTy VisitExpr(Expr *S);
   ComplexPairTy VisitParenExpr(ParenExpr *PE) { return Visit(PE->getSubExpr());}
+  ComplexPairTy VisitGenericSelectionExpr(GenericSelectionExpr *GE) {
+    return Visit(GE->getResultExpr());
+  }
   ComplexPairTy VisitImaginaryLiteral(const ImaginaryLiteral *IL);
+  ComplexPairTy
+  VisitSubstNonTypeTemplateParmExpr(SubstNonTypeTemplateParmExpr *PE) {
+    return Visit(PE->getReplacement());
+  }
 
   // l-values.
-  ComplexPairTy VisitDeclRefExpr(const Expr *E) { return EmitLoadOfLValue(E); }
-  ComplexPairTy VisitObjCIvarRefExpr(ObjCIvarRefExpr *E) {
+  ComplexPairTy VisitDeclRefExpr(DeclRefExpr *E) {
+    if (CodeGenFunction::ConstantEmission result = CGF.tryEmitAsConstant(E)) {
+      if (result.isReference())
+        return EmitLoadOfLValue(result.getReferenceLValue(CGF, E));
+
+      llvm::ConstantStruct *pair =
+        cast<llvm::ConstantStruct>(result.getValue());
+      return ComplexPairTy(pair->getOperand(0), pair->getOperand(1));
+    }
     return EmitLoadOfLValue(E);
   }
-  ComplexPairTy VisitObjCPropertyRefExpr(ObjCPropertyRefExpr *E) {
-    assert(E->getObjectKind() == OK_Ordinary);
+  ComplexPairTy VisitObjCIvarRefExpr(ObjCIvarRefExpr *E) {
     return EmitLoadOfLValue(E);
   }
   ComplexPairTy VisitObjCMessageExpr(ObjCMessageExpr *E) {
@@ -128,6 +134,10 @@ public:
     if (E->isGLValue())
       return EmitLoadOfLValue(CGF.getOpaqueLValueMapping(E));
     return CGF.getOpaqueRValueMapping(E).getComplexVal();
+  }
+
+  ComplexPairTy VisitPseudoObjectExpr(PseudoObjectExpr *E) {
+    return CGF.EmitPseudoObjectRValue(E).getComplexVal();
   }
 
   // FIXME: CompoundLiteralExpr
@@ -178,7 +188,9 @@ public:
     return Visit(DAE->getExpr());
   }
   ComplexPairTy VisitExprWithCleanups(ExprWithCleanups *E) {
-    return CGF.EmitExprWithCleanups(E).getComplexVal();
+    CGF.enterFullExpression(E);
+    CodeGenFunction::RunCleanupsScope Scope(CGF);
+    return Visit(E->getSubExpr());
   }
   ComplexPairTy VisitCXXScalarValueInitExpr(CXXScalarValueInitExpr *E) {
     assert(E->getType()->isAnyComplexType() && "Expected complex type!");
@@ -258,7 +270,15 @@ public:
 
   ComplexPairTy VisitInitListExpr(InitListExpr *E);
 
+  ComplexPairTy VisitCompoundLiteralExpr(CompoundLiteralExpr *E) {
+    return EmitLoadOfLValue(E);
+  }
+
   ComplexPairTy VisitVAArgExpr(VAArgExpr *E);
+
+  ComplexPairTy VisitAtomicExpr(AtomicExpr *E) {
+    return CGF.EmitAtomicExpr(E).getComplexVal();
+  }
 };
 }  // end anonymous namespace.
 
@@ -305,8 +325,8 @@ void ComplexExprEmitter::EmitStoreOfComplex(ComplexPairTy Val, llvm::Value *Ptr,
 
 ComplexPairTy ComplexExprEmitter::VisitExpr(Expr *E) {
   CGF.ErrorUnsupported(E, "complex expression");
-  const llvm::Type *EltTy =
-    CGF.ConvertType(E->getType()->getAs<ComplexType>()->getElementType());
+  llvm::Type *EltTy =
+  CGF.ConvertType(E->getType()->getAs<ComplexType>()->getElementType());
   llvm::Value *U = llvm::UndefValue::get(EltTy);
   return ComplexPairTy(U, U);
 }
@@ -349,47 +369,86 @@ ComplexPairTy ComplexExprEmitter::EmitComplexToComplexCast(ComplexPairTy Val,
 ComplexPairTy ComplexExprEmitter::EmitCast(CastExpr::CastKind CK, Expr *Op, 
                                            QualType DestTy) {
   switch (CK) {
-  case CK_GetObjCProperty: {
-    LValue LV = CGF.EmitLValue(Op);
-    assert(LV.isPropertyRef() && "Unknown LValue type!");
-    return CGF.EmitLoadOfPropertyRefLValue(LV).getComplexVal();
-  }
+  case CK_Dependent: llvm_unreachable("dependent cast kind in IR gen!");
 
+  // Atomic to non-atomic casts may be more than a no-op for some platforms and
+  // for some types.
+  case CK_AtomicToNonAtomic:
+  case CK_NonAtomicToAtomic:
   case CK_NoOp:
   case CK_LValueToRValue:
+  case CK_UserDefinedConversion:
     return Visit(Op);
 
-  // TODO: do all of these
-  default:
-    break;
-  }
-
-  // Two cases here: cast from (complex to complex) and (scalar to complex).
-  if (Op->getType()->isAnyComplexType())
-    return EmitComplexToComplexCast(Visit(Op), Op->getType(), DestTy);
-
-  // FIXME: We should be looking at all of the cast kinds here, not
-  // cherry-picking the ones we have test cases for.
-  if (CK == CK_LValueBitCast) {
+  case CK_LValueBitCast: {
     llvm::Value *V = CGF.EmitLValue(Op).getAddress();
     V = Builder.CreateBitCast(V, 
-                      CGF.ConvertType(CGF.getContext().getPointerType(DestTy)));
+                    CGF.ConvertType(CGF.getContext().getPointerType(DestTy)));
     // FIXME: Are the qualifiers correct here?
     return EmitLoadOfComplex(V, DestTy.isVolatileQualified());
   }
-  
-  // C99 6.3.1.7: When a value of real type is converted to a complex type, the
-  // real part of the complex result value is determined by the rules of
-  // conversion to the corresponding real type and the imaginary part of the
-  // complex result value is a positive zero or an unsigned zero.
-  llvm::Value *Elt = CGF.EmitScalarExpr(Op);
 
-  // Convert the input element to the element type of the complex.
-  DestTy = DestTy->getAs<ComplexType>()->getElementType();
-  Elt = CGF.EmitScalarConversion(Elt, Op->getType(), DestTy);
+  case CK_BitCast:
+  case CK_BaseToDerived:
+  case CK_DerivedToBase:
+  case CK_UncheckedDerivedToBase:
+  case CK_Dynamic:
+  case CK_ToUnion:
+  case CK_ArrayToPointerDecay:
+  case CK_FunctionToPointerDecay:
+  case CK_NullToPointer:
+  case CK_NullToMemberPointer:
+  case CK_BaseToDerivedMemberPointer:
+  case CK_DerivedToBaseMemberPointer:
+  case CK_MemberPointerToBoolean:
+  case CK_ReinterpretMemberPointer:
+  case CK_ConstructorConversion:
+  case CK_IntegralToPointer:
+  case CK_PointerToIntegral:
+  case CK_PointerToBoolean:
+  case CK_ToVoid:
+  case CK_VectorSplat:
+  case CK_IntegralCast:
+  case CK_IntegralToBoolean:
+  case CK_IntegralToFloating:
+  case CK_FloatingToIntegral:
+  case CK_FloatingToBoolean:
+  case CK_FloatingCast:
+  case CK_CPointerToObjCPointerCast:
+  case CK_BlockPointerToObjCPointerCast:
+  case CK_AnyPointerToBlockPointerCast:
+  case CK_ObjCObjectLValueCast:
+  case CK_FloatingComplexToReal:
+  case CK_FloatingComplexToBoolean:
+  case CK_IntegralComplexToReal:
+  case CK_IntegralComplexToBoolean:
+  case CK_ARCProduceObject:
+  case CK_ARCConsumeObject:
+  case CK_ARCReclaimReturnedObject:
+  case CK_ARCExtendBlockObject:
+  case CK_CopyAndAutoreleaseBlockObject:
+    llvm_unreachable("invalid cast kind for complex value");
 
-  // Return (realval, 0).
-  return ComplexPairTy(Elt, llvm::Constant::getNullValue(Elt->getType()));
+  case CK_FloatingRealToComplex:
+  case CK_IntegralRealToComplex: {
+    llvm::Value *Elt = CGF.EmitScalarExpr(Op);
+
+    // Convert the input element to the element type of the complex.
+    DestTy = DestTy->getAs<ComplexType>()->getElementType();
+    Elt = CGF.EmitScalarConversion(Elt, Op->getType(), DestTy);
+
+    // Return (realval, 0).
+    return ComplexPairTy(Elt, llvm::Constant::getNullValue(Elt->getType()));
+  }
+
+  case CK_FloatingComplexCast:
+  case CK_FloatingComplexToIntegralComplex:
+  case CK_IntegralComplexCast:
+  case CK_IntegralComplexToFloatingComplex:
+    return EmitComplexToComplexCast(Visit(Op), Op->getType(), DestTy);
+  }
+
+  llvm_unreachable("unknown cast resulting in complex value");
 }
 
 ComplexPairTy ComplexExprEmitter::VisitUnaryMinus(const UnaryOperator *E) {
@@ -480,40 +539,40 @@ ComplexPairTy ComplexExprEmitter::EmitBinDiv(const BinOpInfo &Op) {
   llvm::Value *DSTr, *DSTi;
   if (Op.LHS.first->getType()->isFloatingPointTy()) {
     // (a+ib) / (c+id) = ((ac+bd)/(cc+dd)) + i((bc-ad)/(cc+dd))
-    llvm::Value *Tmp1 = Builder.CreateFMul(LHSr, RHSr, "tmp"); // a*c
-    llvm::Value *Tmp2 = Builder.CreateFMul(LHSi, RHSi, "tmp"); // b*d
-    llvm::Value *Tmp3 = Builder.CreateFAdd(Tmp1, Tmp2, "tmp"); // ac+bd
+    llvm::Value *Tmp1 = Builder.CreateFMul(LHSr, RHSr); // a*c
+    llvm::Value *Tmp2 = Builder.CreateFMul(LHSi, RHSi); // b*d
+    llvm::Value *Tmp3 = Builder.CreateFAdd(Tmp1, Tmp2); // ac+bd
 
-    llvm::Value *Tmp4 = Builder.CreateFMul(RHSr, RHSr, "tmp"); // c*c
-    llvm::Value *Tmp5 = Builder.CreateFMul(RHSi, RHSi, "tmp"); // d*d
-    llvm::Value *Tmp6 = Builder.CreateFAdd(Tmp4, Tmp5, "tmp"); // cc+dd
+    llvm::Value *Tmp4 = Builder.CreateFMul(RHSr, RHSr); // c*c
+    llvm::Value *Tmp5 = Builder.CreateFMul(RHSi, RHSi); // d*d
+    llvm::Value *Tmp6 = Builder.CreateFAdd(Tmp4, Tmp5); // cc+dd
 
-    llvm::Value *Tmp7 = Builder.CreateFMul(LHSi, RHSr, "tmp"); // b*c
-    llvm::Value *Tmp8 = Builder.CreateFMul(LHSr, RHSi, "tmp"); // a*d
-    llvm::Value *Tmp9 = Builder.CreateFSub(Tmp7, Tmp8, "tmp"); // bc-ad
+    llvm::Value *Tmp7 = Builder.CreateFMul(LHSi, RHSr); // b*c
+    llvm::Value *Tmp8 = Builder.CreateFMul(LHSr, RHSi); // a*d
+    llvm::Value *Tmp9 = Builder.CreateFSub(Tmp7, Tmp8); // bc-ad
 
-    DSTr = Builder.CreateFDiv(Tmp3, Tmp6, "tmp");
-    DSTi = Builder.CreateFDiv(Tmp9, Tmp6, "tmp");
+    DSTr = Builder.CreateFDiv(Tmp3, Tmp6);
+    DSTi = Builder.CreateFDiv(Tmp9, Tmp6);
   } else {
     // (a+ib) / (c+id) = ((ac+bd)/(cc+dd)) + i((bc-ad)/(cc+dd))
-    llvm::Value *Tmp1 = Builder.CreateMul(LHSr, RHSr, "tmp"); // a*c
-    llvm::Value *Tmp2 = Builder.CreateMul(LHSi, RHSi, "tmp"); // b*d
-    llvm::Value *Tmp3 = Builder.CreateAdd(Tmp1, Tmp2, "tmp"); // ac+bd
+    llvm::Value *Tmp1 = Builder.CreateMul(LHSr, RHSr); // a*c
+    llvm::Value *Tmp2 = Builder.CreateMul(LHSi, RHSi); // b*d
+    llvm::Value *Tmp3 = Builder.CreateAdd(Tmp1, Tmp2); // ac+bd
 
-    llvm::Value *Tmp4 = Builder.CreateMul(RHSr, RHSr, "tmp"); // c*c
-    llvm::Value *Tmp5 = Builder.CreateMul(RHSi, RHSi, "tmp"); // d*d
-    llvm::Value *Tmp6 = Builder.CreateAdd(Tmp4, Tmp5, "tmp"); // cc+dd
+    llvm::Value *Tmp4 = Builder.CreateMul(RHSr, RHSr); // c*c
+    llvm::Value *Tmp5 = Builder.CreateMul(RHSi, RHSi); // d*d
+    llvm::Value *Tmp6 = Builder.CreateAdd(Tmp4, Tmp5); // cc+dd
 
-    llvm::Value *Tmp7 = Builder.CreateMul(LHSi, RHSr, "tmp"); // b*c
-    llvm::Value *Tmp8 = Builder.CreateMul(LHSr, RHSi, "tmp"); // a*d
-    llvm::Value *Tmp9 = Builder.CreateSub(Tmp7, Tmp8, "tmp"); // bc-ad
+    llvm::Value *Tmp7 = Builder.CreateMul(LHSi, RHSr); // b*c
+    llvm::Value *Tmp8 = Builder.CreateMul(LHSr, RHSi); // a*d
+    llvm::Value *Tmp9 = Builder.CreateSub(Tmp7, Tmp8); // bc-ad
 
     if (Op.Ty->getAs<ComplexType>()->getElementType()->isUnsignedIntegerType()) {
-      DSTr = Builder.CreateUDiv(Tmp3, Tmp6, "tmp");
-      DSTi = Builder.CreateUDiv(Tmp9, Tmp6, "tmp");
+      DSTr = Builder.CreateUDiv(Tmp3, Tmp6);
+      DSTi = Builder.CreateUDiv(Tmp9, Tmp6);
     } else {
-      DSTr = Builder.CreateSDiv(Tmp3, Tmp6, "tmp");
-      DSTi = Builder.CreateSDiv(Tmp9, Tmp6, "tmp");
+      DSTr = Builder.CreateSDiv(Tmp3, Tmp6);
+      DSTi = Builder.CreateSDiv(Tmp9, Tmp6);
     }
   }
 
@@ -581,11 +640,7 @@ EmitCompoundAssign(const CompoundAssignOperator *E,
   LValue LV = EmitCompoundAssignLValue(E, Func, Val);
 
   // The result of an assignment in C is the assigned r-value.
-  if (!CGF.getContext().getLangOptions().CPlusPlus)
-    return Val;
-
-  // Objective-C property assignment never reloads the value following a store.
-  if (LV.isPropertyRef())
+  if (!CGF.getContext().getLangOpts().CPlusPlus)
     return Val;
 
   // If the lvalue is non-volatile, return the computed value of the assignment.
@@ -620,11 +675,7 @@ ComplexPairTy ComplexExprEmitter::VisitBinAssign(const BinaryOperator *E) {
   LValue LV = EmitBinAssignLValue(E, Val);
 
   // The result of an assignment in C is the assigned r-value.
-  if (!CGF.getContext().getLangOptions().CPlusPlus)
-    return Val;
-
-  // Objective-C property assignment never reloads the value following a store.
-  if (LV.isPropertyRef())
+  if (!CGF.getContext().getLangOpts().CPlusPlus)
     return Val;
 
   // If the lvalue is non-volatile, return the computed value of the assignment.
@@ -668,14 +719,12 @@ VisitAbstractConditionalOperator(const AbstractConditionalOperator *E) {
   eval.end(CGF);
 
   // Create a PHI node for the real part.
-  llvm::PHINode *RealPN = Builder.CreatePHI(LHS.first->getType(), "cond.r");
-  RealPN->reserveOperandSpace(2);
+  llvm::PHINode *RealPN = Builder.CreatePHI(LHS.first->getType(), 2, "cond.r");
   RealPN->addIncoming(LHS.first, LHSBlock);
   RealPN->addIncoming(RHS.first, RHSBlock);
 
   // Create a PHI node for the imaginary part.
-  llvm::PHINode *ImagPN = Builder.CreatePHI(LHS.first->getType(), "cond.i");
-  ImagPN->reserveOperandSpace(2);
+  llvm::PHINode *ImagPN = Builder.CreatePHI(LHS.first->getType(), 2, "cond.i");
   ImagPN->addIncoming(LHS.second, LHSBlock);
   ImagPN->addIncoming(RHS.second, RHSBlock);
 
@@ -693,12 +742,19 @@ ComplexPairTy ComplexExprEmitter::VisitInitListExpr(InitListExpr *E) {
     Ignore = TestAndClearIgnoreImag();
     (void)Ignore;
     assert (Ignore == false && "init list ignored");
-  if (E->getNumInits())
+
+  if (E->getNumInits() == 2) {
+    llvm::Value *Real = CGF.EmitScalarExpr(E->getInit(0));
+    llvm::Value *Imag = CGF.EmitScalarExpr(E->getInit(1));
+    return ComplexPairTy(Real, Imag);
+  } else if (E->getNumInits() == 1) {
     return Visit(E->getInit(0));
+  }
 
   // Empty init list intializes to null
+  assert(E->getNumInits() == 0 && "Unexpected number of inits");
   QualType Ty = E->getType()->getAs<ComplexType>()->getElementType();
-  const llvm::Type* LTy = CGF.ConvertType(Ty);
+  llvm::Type* LTy = CGF.ConvertType(Ty);
   llvm::Value* zeroConstant = llvm::Constant::getNullValue(LTy);
   return ComplexPairTy(zeroConstant, zeroConstant);
 }
@@ -709,7 +765,7 @@ ComplexPairTy ComplexExprEmitter::VisitVAArgExpr(VAArgExpr *E) {
 
   if (!ArgPtr) {
     CGF.ErrorUnsupported(E, "complex va_arg expression");
-    const llvm::Type *EltTy =
+    llvm::Type *EltTy =
       CGF.ConvertType(E->getType()->getAs<ComplexType>()->getElementType());
     llvm::Value *U = llvm::UndefValue::get(EltTy);
     return ComplexPairTy(U, U);
@@ -776,7 +832,6 @@ EmitComplexCompoundAssignmentLValue(const CompoundAssignOperator *E) {
 
   default:
     llvm_unreachable("unexpected complex compound assignment");
-    Op = 0;
   }
 
   ComplexPairTy Val; // ignored

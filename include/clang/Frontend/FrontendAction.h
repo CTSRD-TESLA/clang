@@ -10,14 +10,13 @@
 #ifndef LLVM_CLANG_FRONTEND_FRONTENDACTION_H
 #define LLVM_CLANG_FRONTEND_FRONTENDACTION_H
 
+#include "clang/Basic/LLVM.h"
+#include "clang/Basic/LangOptions.h"
+#include "clang/Frontend/FrontendOptions.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/OwningPtr.h"
 #include <string>
 #include <vector>
-
-namespace llvm {
-  class raw_ostream;
-}
 
 namespace clang {
 class ASTConsumer;
@@ -25,36 +24,18 @@ class ASTMergeAction;
 class ASTUnit;
 class CompilerInstance;
 
-enum InputKind {
-  IK_None,
-  IK_Asm,
-  IK_C,
-  IK_CXX,
-  IK_ObjC,
-  IK_ObjCXX,
-  IK_PreprocessedC,
-  IK_PreprocessedCXX,
-  IK_PreprocessedObjC,
-  IK_PreprocessedObjCXX,
-  IK_OpenCL,
-  IK_CUDA,
-  IK_AST,
-  IK_LLVM_IR
-};
-
-
 /// FrontendAction - Abstract base class for actions which can be performed by
 /// the frontend.
 class FrontendAction {
-  std::string CurrentFile;
-  InputKind CurrentFileKind;
-  llvm::OwningPtr<ASTUnit> CurrentASTUnit;
+  FrontendInputFile CurrentInput;
+  OwningPtr<ASTUnit> CurrentASTUnit;
   CompilerInstance *Instance;
   friend class ASTMergeAction;
+  friend class WrapperFrontendAction;
 
 private:
   ASTConsumer* CreateWrappedASTConsumer(CompilerInstance &CI,
-                                        llvm::StringRef InFile);
+                                        StringRef InFile);
 
 protected:
   /// @name Implementation Action Interface
@@ -75,7 +56,15 @@ protected:
   ///
   /// \return The new AST consumer, or 0 on failure.
   virtual ASTConsumer *CreateASTConsumer(CompilerInstance &CI,
-                                         llvm::StringRef InFile) = 0;
+                                         StringRef InFile) = 0;
+
+  /// \brief Callback before starting processing a single input, giving the
+  /// opportunity to modify the CompilerInvocation or do some other action
+  /// before BeginSourceFileAction is called.
+  ///
+  /// \return True on success; on failure \see BeginSourceFileAction() and
+  /// ExecutionAction() and EndSourceFileAction() will not be called.
+  virtual bool BeginInvocation(CompilerInstance &CI) { return true; }
 
   /// BeginSourceFileAction - Callback at the start of processing a single
   /// input.
@@ -83,7 +72,7 @@ protected:
   /// \return True on success; on failure \see ExecutionAction() and
   /// EndSourceFileAction() will not be called.
   virtual bool BeginSourceFileAction(CompilerInstance &CI,
-                                     llvm::StringRef Filename) {
+                                     StringRef Filename) {
     return true;
   }
 
@@ -96,7 +85,7 @@ protected:
 
   /// EndSourceFileAction - Callback at the end of processing a single input;
   /// this is guaranteed to only be called following a successful call to
-  /// BeginSourceFileAction (and BeingSourceFile).
+  /// BeginSourceFileAction (and BeginSourceFile).
   virtual void EndSourceFileAction() {}
 
   /// @}
@@ -120,18 +109,22 @@ public:
   /// @{
 
   bool isCurrentFileAST() const {
-    assert(!CurrentFile.empty() && "No current file!");
+    assert(!CurrentInput.File.empty() && "No current file!");
     return CurrentASTUnit != 0;
   }
 
+  const FrontendInputFile &getCurrentInput() const {
+    return CurrentInput;
+  }
+  
   const std::string &getCurrentFile() const {
-    assert(!CurrentFile.empty() && "No current file!");
-    return CurrentFile;
+    assert(!CurrentInput.File.empty() && "No current file!");
+    return CurrentInput.File;
   }
 
   InputKind getCurrentFileKind() const {
-    assert(!CurrentFile.empty() && "No current file!");
-    return CurrentFileKind;
+    assert(!CurrentInput.File.empty() && "No current file!");
+    return CurrentInput.Kind;
   }
 
   ASTUnit &getCurrentASTUnit() const {
@@ -143,7 +136,7 @@ public:
     return CurrentASTUnit.take();
   }
 
-  void setCurrentFile(llvm::StringRef Value, InputKind Kind, ASTUnit *AST = 0);
+  void setCurrentInput(const FrontendInputFile &CurrentInput, ASTUnit *AST = 0);
 
   /// @}
   /// @name Supported Modes
@@ -154,9 +147,8 @@ public:
   /// file inputs.
   virtual bool usesPreprocessorOnly() const = 0;
 
-  /// usesCompleteTranslationUnit - For AST based actions, should the
-  /// translation unit be completed?
-  virtual bool usesCompleteTranslationUnit() { return true; }
+  /// \brief For AST-based actions, the kind of translation unit we're handling.
+  virtual TranslationUnitKind getTranslationUnitKind() { return TU_Complete; }
 
   /// hasPCHSupport - Does this action support use with PCH?
   virtual bool hasPCHSupport() const { return !usesPreprocessorOnly(); }
@@ -183,10 +175,7 @@ public:
   /// action may store and use this object up until the matching EndSourceFile
   /// action.
   ///
-  /// \param Filename - The input filename, which will be made available to
-  /// clients via \see getCurrentFile().
-  ///
-  /// \param InputKind - The type of input. Some input kinds are handled
+  /// \param Input - The input filename and kind. Some input kinds are handled
   /// specially, for example AST inputs, since the AST file itself contains
   /// several objects which would normally be owned by the
   /// CompilerInstance. When processing AST input files, these objects should
@@ -194,13 +183,12 @@ public:
   /// automatically be shared with the AST file in between \see
   /// BeginSourceFile() and \see EndSourceFile().
   ///
-  /// \return True on success; the compilation of this file should be aborted
-  /// and neither Execute nor EndSourceFile should be called.
-  bool BeginSourceFile(CompilerInstance &CI, llvm::StringRef Filename,
-                       InputKind Kind);
+  /// \return True on success; on failure the compilation of this file should
+  /// be aborted and neither Execute nor EndSourceFile should be called.
+  bool BeginSourceFile(CompilerInstance &CI, const FrontendInputFile &Input);
 
   /// Execute - Set the source managers main input file, and run the action.
-  void Execute();
+  bool Execute();
 
   /// EndSourceFile - Perform any per-file post processing, deallocate per-file
   /// objects, and run statistics and output file cleanup code.
@@ -225,9 +213,10 @@ public:
 };
 
 class PluginASTAction : public ASTFrontendAction {
+  virtual void anchor();
 protected:
   virtual ASTConsumer *CreateASTConsumer(CompilerInstance &CI,
-                                         llvm::StringRef InFile) = 0;
+                                         StringRef InFile) = 0;
 
 public:
   /// ParseArgs - Parse the given plugin command line arguments.
@@ -247,10 +236,40 @@ protected:
   /// CreateASTConsumer - Provide a default implementation which returns aborts,
   /// this method should never be called by FrontendAction clients.
   virtual ASTConsumer *CreateASTConsumer(CompilerInstance &CI,
-                                         llvm::StringRef InFile);
+                                         StringRef InFile);
 
 public:
   virtual bool usesPreprocessorOnly() const { return true; }
+};
+
+/// WrapperFrontendAction - A frontend action which simply wraps some other
+/// runtime specified frontend action. Deriving from this class allows an
+/// action to inject custom logic around some existing action's behavior. It
+/// implements every virtual method in the FrontendAction interface by
+/// forwarding to the wrapped action.
+class WrapperFrontendAction : public FrontendAction {
+  OwningPtr<FrontendAction> WrappedAction;
+
+protected:
+  virtual ASTConsumer *CreateASTConsumer(CompilerInstance &CI,
+                                         StringRef InFile);
+  virtual bool BeginInvocation(CompilerInstance &CI);
+  virtual bool BeginSourceFileAction(CompilerInstance &CI,
+                                     StringRef Filename);
+  virtual void ExecuteAction();
+  virtual void EndSourceFileAction();
+
+public:
+  /// Construct a WrapperFrontendAction from an existing action, taking
+  /// ownership of it.
+  WrapperFrontendAction(FrontendAction *WrappedAction);
+
+  virtual bool usesPreprocessorOnly() const;
+  virtual TranslationUnitKind getTranslationUnitKind();
+  virtual bool hasPCHSupport() const;
+  virtual bool hasASTFileSupport() const;
+  virtual bool hasIRSupport() const;
+  virtual bool hasCodeCompletionSupport() const;
 };
 
 }  // end namespace clang

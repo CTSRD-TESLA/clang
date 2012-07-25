@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -pedantic -std=c++0x -verify -triple x86_64-apple-darwin %s
+// RUN: %clang_cc1 -fsyntax-only -pedantic -std=c++11 -verify -triple x86_64-apple-darwin %s
 
 enum E {};
 
@@ -14,5 +14,5 @@ struct X {
 
 struct Y {
   enum E : int(2);
-  enum E : Z(); // expected-error{{not an integer constant}}
+  enum E : Z(); // expected-error{{integral constant expression must have integral or unscoped enumeration type, not 'Z'}}
 };

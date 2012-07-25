@@ -1,15 +1,11 @@
 // NOTE: Use '-fobjc-gc' to test the analysis being run twice, and multiple reports are not issued.
-// RUN: %clang_cc1 -triple i386-apple-darwin10 -analyze -analyzer-checker=core,core.experimental,cocoa.AtSync -analyzer-disable-checker=core.experimental.Malloc -analyzer-store=basic -fobjc-gc -analyzer-constraints=basic -verify -fblocks -Wno-unreachable-code %s
-// RUN: %clang_cc1 -triple i386-apple-darwin10 -analyze -analyzer-checker=core,core.experimental,cocoa.AtSync -analyzer-disable-checker=core.experimental.Malloc -analyzer-store=basic -analyzer-constraints=range -verify -fblocks -Wno-unreachable-code %s
-// RUN: %clang_cc1 -triple i386-apple-darwin10 -analyze -analyzer-checker=core,core.experimental,cocoa.AtSync -analyzer-store=region -analyzer-constraints=basic -verify -fblocks -Wno-unreachable-code %s
-// RUN: %clang_cc1 -triple i386-apple-darwin10 -analyze -analyzer-checker=core,core.experimental,cocoa.AtSync -analyzer-store=region -analyzer-constraints=range -verify -fblocks -Wno-unreachable-code %s
-// RUN: %clang_cc1 -triple x86_64-apple-darwin10 -analyze -analyzer-checker=core,core.experimental,cocoa.AtSync -analyzer-disable-checker=core.experimental.Malloc -analyzer-store=basic -fobjc-gc -analyzer-constraints=basic -verify -fblocks -Wno-unreachable-code %s
-// RUN: %clang_cc1 -triple x86_64-apple-darwin10 -analyze -analyzer-checker=core,core.experimental,cocoa.AtSync -analyzer-disable-checker=core.experimental.Malloc -analyzer-store=basic -analyzer-constraints=range -verify -fblocks -Wno-unreachable-code %s
-// RUN: %clang_cc1 -triple x86_64-apple-darwin10 -analyze -analyzer-checker=core,core.experimental,cocoa.AtSync -analyzer-store=region -analyzer-constraints=basic -verify -fblocks -Wno-unreachable-code %s
-// RUN: %clang_cc1 -triple x86_64-apple-darwin10 -analyze -analyzer-checker=core,core.experimental,cocoa.AtSync -analyzer-store=region -analyzer-constraints=range -verify -fblocks -Wno-unreachable-code %s
+// RUN: %clang_cc1 -triple i386-apple-darwin10 -analyze -analyzer-checker=core,experimental.deadcode.IdempotentOperations,experimental.core,osx.cocoa.AtSync,osx.AtomicCAS -analyzer-store=region -analyzer-constraints=basic -verify -fblocks -Wno-unreachable-code -Wno-null-dereference -Wno-objc-root-class %s
+// RUN: %clang_cc1 -triple i386-apple-darwin10 -analyze -analyzer-checker=core,experimental.deadcode.IdempotentOperations,experimental.core,osx.cocoa.AtSync,osx.AtomicCAS -analyzer-store=region -analyzer-constraints=range -verify -fblocks -Wno-unreachable-code -Wno-null-dereference -Wno-objc-root-class %s
+// RUN: %clang_cc1 -triple x86_64-apple-darwin10 -analyze -analyzer-checker=core,experimental.deadcode.IdempotentOperations,experimental.core,osx.cocoa.AtSync,osx.AtomicCAS -analyzer-store=region -analyzer-constraints=basic -verify -fblocks -Wno-unreachable-code -Wno-null-dereference -Wno-objc-root-class %s
+// RUN: %clang_cc1 -triple x86_64-apple-darwin10 -analyze -analyzer-checker=core,experimental.deadcode.IdempotentOperations,experimental.core,osx.cocoa.AtSync,osx.AtomicCAS -analyzer-store=region -analyzer-constraints=range -verify -fblocks -Wno-unreachable-code -Wno-null-dereference -Wno-objc-root-class %s
 
 #ifndef __clang_analyzer__
-#error __clang__analyzer__ not defined
+#error __clang_analyzer__ not defined
 #endif
 
 typedef struct objc_ivar *Ivar;
@@ -278,6 +274,17 @@ void rdar_6777003(int x) {
   *p = 1; // expected-warning{{Dereference of null pointer}}  
 }
 
+// Check that the pointer-to-conts arguments do not get invalidated by Obj C 
+// interfaces. radar://10595327
+int rdar_10595327(char *str) {
+  char fl = str[0]; 
+  int *p = 0;
+  NSString *s = [NSString stringWithUTF8String:str];
+  if (str[0] != fl)
+      return *p; // no-warning
+  return 0;
+}
+
 // For pointer arithmetic, --/++ should be treated as preserving non-nullness,
 // regardless of how well the underlying StoreManager reasons about pointer
 // arithmetic.
@@ -487,6 +494,17 @@ int OSAtomicCompareAndSwap32Barrier();
 }
 @end
 
+// Do not crash when performing compare and swap on symbolic values.
+typedef int int32_t;
+typedef int int32;
+typedef int32 Atomic32;
+int OSAtomicCompareAndSwap32( int32_t __oldValue, int32_t __newValue, volatile int32_t *__theValue);
+void radar11390991_NoBarrier_CompareAndSwap(volatile Atomic32 *ptr,
+                              Atomic32 old_value,
+                              Atomic32 new_value) {
+  OSAtomicCompareAndSwap32(old_value, new_value, ptr);
+}
+
 // PR 4594 - This was a crash when handling casts in SimpleSValuator.
 void PR4594() {
   char *buf[1];
@@ -553,7 +571,6 @@ int test_array_compound(int *q, int *r, int *z) {
   return j;
 }
 
-// This test case previously crashed with -analyzer-store=basic because the
 // symbolic value stored in 'x' wouldn't be implicitly casted to a signed value
 // during the comparison.
 int rdar_7124210(unsigned int x) {
@@ -1242,7 +1259,7 @@ void pr9269() {
   struct s { char *bar[10]; } baz[2] = { 0 };
   unsigned i = 0;
   for (i = 0;
-  (* ({ while(0); ({ &baz[0]; }); })).bar[0] != 0;
+  (* ({ while(0); ({ &baz[0]; }); })).bar[0] != 0; // expected-warning {{while loop has empty body}} expected-note {{put the semicolon on a separate line to silence this warning}}
        ++i) {}
 }
 
@@ -1288,3 +1305,54 @@ void test_switch() {
     }
   }
 }
+
+// PR 9467.  Tests various CFG optimizations.  This previously crashed.
+static void test(unsigned int bit_mask)
+{
+  unsigned int bit_index;
+  for (bit_index = 0;
+       bit_index < 24;
+       bit_index++) {
+    switch ((0x01 << bit_index) & bit_mask) {
+    case 0x100000: ;
+    }
+  }
+}
+
+// Don't crash on code containing __label__.
+int radar9414427_aux();
+void radar9414427() {
+  __label__ mylabel;
+  if (radar9414427_aux()) {
+  mylabel: do {}
+  while (0);
+  }
+}
+
+// Analyze methods in @implementation (category)
+@interface RDar9465344
+@end
+
+@implementation RDar9465344 (MyCategory)
+- (void) testcategoryImpl {
+  int *p = 0x0;
+  *p = 0xDEADBEEF; // expected-warning {{null}}
+}
+@end
+
+@implementation RDar9465344
+@end
+
+// Don't crash when analyzing access to 'self' within a block.
+@interface Rdar10380300Base 
+- (void) foo;
+@end
+@interface Rdar10380300 : Rdar10380300Base @end
+@implementation Rdar10380300
+- (void)foo {
+  ^{
+    [super foo];
+  }();
+}
+@end
+

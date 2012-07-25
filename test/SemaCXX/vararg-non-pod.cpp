@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify -fblocks %s -Wnon-pod-varargs
+// RUN: %clang_cc1 -fsyntax-only -verify -fblocks %s -Wno-error=non-pod-varargs
 
 extern char version[];
 
@@ -56,15 +56,18 @@ void t4()
 }
 
 class E {
-  E(int, ...);
+  E(int, ...); // expected-note 2{{implicitly declared private here}}
 };
 
 void t5()
 {
   C c(10);
   
-  E e(10, c); // expected-warning{{cannot pass object of non-POD type 'C' through variadic constructor; call will abort at runtime}}
-  (void)E(10, c); // expected-warning{{cannot pass object of non-POD type 'C' through variadic constructor; call will abort at runtime}}
+  E e(10, c); // expected-warning{{cannot pass object of non-POD type 'C' through variadic constructor; call will abort at runtime}} \
+    // expected-error{{calling a private constructor of class 'E'}}
+  (void)E(10, c); // expected-warning{{cannot pass object of non-POD type 'C' through variadic constructor; call will abort at runtime}} \
+    // expected-error{{calling a private constructor of class 'E'}}
+
 }
 
 // PR5761: unevaluated operands and the non-POD warning
@@ -98,3 +101,25 @@ void t6(Foo somearg, ... ) {
   __builtin_va_start(list, somearg);
 }
 
+void t7(int n, ...) {
+  __builtin_va_list list;
+  __builtin_va_start(list, n);
+  (void)__builtin_va_arg(list, C); // expected-warning{{second argument to 'va_arg' is of non-POD type 'C'}}
+  __builtin_va_end(list);
+}
+
+struct Abstract {
+  virtual void doit() = 0; // expected-note{{unimplemented pure virtual method}}
+};
+
+void t8(int n, ...) {
+  __builtin_va_list list;
+  __builtin_va_start(list, n);
+  (void)__builtin_va_arg(list, Abstract); // expected-error{{second argument to 'va_arg' is of abstract type 'Abstract'}}
+  __builtin_va_end(list);
+}
+
+int t9(int n) {
+  // Make sure the error works in potentially-evaluated sizeof
+  return (int)sizeof(*(Helper(Foo()), (int (*)[n])0)); // expected-warning{{cannot pass object of non-POD type}}
+}

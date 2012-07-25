@@ -5,7 +5,7 @@ typedef struct _NSZone NSZone;
 
 @class NSInvocation, NSMethodSignature, NSCoder, NSString, NSEnumerator;
 
-@protocol NSObject - (BOOL) isEqual:(id) object; @end
+@protocol NSObject - (BOOL) isEqual:(id) object; - (id)init; @end
 @protocol NSCopying - (id) copyWithZone:(NSZone *) zone; @end
 @protocol NSCoding - (void) encodeWithCoder:(NSCoder *) aCoder; @end
 
@@ -48,13 +48,13 @@ typedef NSObject < XCElementSpacerP > XCElementSpacer;
 @protocol XCElementTogglerP < XCElementP > -(void) setDisplayed:(BOOL) displayed;
 @end
 
-typedef NSObject < XCElementTogglerP > XCElementToggler;
+typedef NSObject < XCElementTogglerP > XCElementToggler; // expected-note {{previous definition is here}}
 
 @interface XCElementRootFace:NSObject {} @end
 
 @interface XCElementFace:XCElementRootFace {} @end
 
-@class XCElementToggler; 
+@class XCElementToggler;  // expected-warning {{redefinition of forward class 'XCElementToggler' of a typedef name of an object type is ignored}}
 
 @interface XCRASlice:XCElementFace {} @end
 

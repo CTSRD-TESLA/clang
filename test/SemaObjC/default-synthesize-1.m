@@ -1,4 +1,5 @@
-// RUN: %clang_cc1 -fsyntax-only -fobjc-nonfragile-abi -fobjc-default-synthesize-properties -verify %s
+// RUN: %clang_cc1 -fsyntax-only -fobjc-default-synthesize-properties -Wobjc-missing-property-synthesis -verify -Wno-objc-root-class %s
+// rdar://11295716
 
 @interface NSObject 
 - (void) release;
@@ -7,53 +8,53 @@
 @class NSString;
 
 @interface SynthItAll : NSObject
-@property int howMany;
-@property (retain) NSString* what;
+@property int howMany; // expected-warning {{auto property synthesis is synthesizing property not explicitly synthesized}}
+@property (retain) NSString* what; // expected-warning {{auto property synthesis is synthesizing property not explicitly synthesized}}
 @end
 
-@implementation SynthItAll
+@implementation SynthItAll // expected-note 2 {{detected while default synthesizing properties in class implementation}}
 //@synthesize howMany, what;
 @end
 
 
 @interface SynthSetter : NSObject
-@property (nonatomic) int howMany;  // REM: nonatomic to avoid warnings about only implementing one of the pair
-@property (nonatomic, retain) NSString* what;
+@property (nonatomic) int howMany;   // expected-warning {{auto property synthesis is synthesizing property not explicitly synthesized}}
+@property (nonatomic, retain) NSString* what;  // expected-warning {{auto property synthesis is synthesizing property not explicitly synthesized}}
 @end
 
-@implementation SynthSetter
+@implementation SynthSetter // expected-note 2 {{detected while default synthesizing properties in class implementation}}
 //@synthesize howMany, what;
 
 - (int) howMany {
-    return howMany;
+    return _howMany;
 }
 // - (void) setHowMany: (int) value
 
 - (NSString*) what {
-    return what;
+    return _what;
 }
 // - (void) setWhat: (NSString*) value    
 @end
 
 
 @interface SynthGetter : NSObject
-@property (nonatomic) int howMany;  // REM: nonatomic to avoid warnings about only implementing one of the pair
-@property (nonatomic, retain) NSString* what;
+@property (nonatomic) int howMany; // expected-warning {{auto property synthesis is synthesizing property not explicitly synthesized}} 
+@property (nonatomic, retain) NSString* what; // expected-warning {{auto property synthesis is synthesizing property not explicitly synthesized}}
 @end
 
-@implementation SynthGetter
+@implementation SynthGetter // expected-note 2 {{detected while default synthesizing properties in class implementation}}
 //@synthesize howMany, what;
 
 // - (int) howMany
 - (void) setHowMany: (int) value {
-    howMany = value;
+    _howMany = value;
 }
 
 // - (NSString*) what
 - (void) setWhat: (NSString*) value {
-    if (what != value) {
-        [what release];
-        what = [value retain];
+    if (_what != value) {
+        [_what release];
+        _what = [value retain];
     }
 }
 @end
@@ -68,19 +69,19 @@
 //@synthesize howMany, what;  // REM: Redundant anyway
 
 - (int) howMany {
-    return howMany;
+    return howMany; // expected-error {{use of undeclared identifier 'howMany'}}
 }
 - (void) setHowMany: (int) value {
-    howMany = value;
+    howMany = value; // expected-error {{use of undeclared identifier 'howMany'}}
 }
 
 - (NSString*) what {
-    return what;
+    return what; // expected-error {{use of undeclared identifier 'what'}}
 }
 - (void) setWhat: (NSString*) value {
-    if (what != value) {
-        [what release];
-        what = [value retain];
+    if (what != value) { // expected-error {{use of undeclared identifier 'what'}}
+        [what release]; // expected-error {{use of undeclared identifier 'what'}}
+        what = [value retain]; // expected-error {{use of undeclared identifier 'what'}}
     }
 }
 @end
@@ -114,3 +115,12 @@
 }
 @end
 
+@interface rdar11333367
+@property enum A x; // expected-note {{forward declaration of 'enum A'}} expected-note {{property declared here}}
+@property struct B y; // expected-note {{forward declaration of 'struct B'}} expected-note {{property declared here}} \
+                      // expected-warning {{auto property synthesis is synthesizing property not explicitly synthesized}}
+@end
+@implementation rdar11333367 // expected-error {{cannot synthesize property 'y' with incomplete type 'struct B'}} \
+                             // expected-note {{detected while default synthesizing properties in class implementation}}
+@synthesize x; // expected-error {{cannot synthesize property 'x' with incomplete type 'enum A'}}
+@end

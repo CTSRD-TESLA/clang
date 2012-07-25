@@ -1,5 +1,5 @@
-// RUN: %clang_cc1 -triple i386-apple-darwin9 -analyze -analyzer-checker=core,core.experimental.IdempotentOps,core.experimental.CastToStruct,core.experimental.ReturnPtrRange,core.experimental.ReturnPtrRange,core.experimental.ArrayBound -analyzer-store=region -verify -fblocks -analyzer-opt-analyze-nested-blocks %s
-// RUN: %clang_cc1 -triple x86_64-apple-darwin9 -DTEST_64 -analyze -analyzer-checker=core,core.experimental.IdempotentOps,core.experimental.CastToStruct,core.experimental.ReturnPtrRange,core.experimental.ArrayBound -analyzer-store=region -verify -fblocks   -analyzer-opt-analyze-nested-blocks %s
+// RUN: %clang_cc1 -triple i386-apple-darwin9 -analyze -analyzer-checker=core,experimental.deadcode.IdempotentOperations,experimental.core.CastToStruct,experimental.security.ReturnPtrRange,experimental.security.ArrayBound -analyzer-store=region -verify -fblocks -analyzer-opt-analyze-nested-blocks -Wno-objc-root-class %s
+// RUN: %clang_cc1 -triple x86_64-apple-darwin9 -DTEST_64 -analyze -analyzer-checker=core,experimental.deadcode.IdempotentOperations,experimental.core.CastToStruct,experimental.security.ReturnPtrRange,experimental.security.ArrayBound -analyzer-store=region -verify -fblocks   -analyzer-opt-analyze-nested-blocks -Wno-objc-root-class %s
 
 typedef long unsigned int size_t;
 void *memcpy(void *, const void *, size_t);
@@ -294,9 +294,11 @@ int test_invalidate_field_test_positive() {
 struct ArrayWrapper { unsigned char y[16]; };
 struct WrappedStruct { unsigned z; };
 
+void test_handle_array_wrapper_helper();
+
 int test_handle_array_wrapper() {
   struct ArrayWrapper x;
-  test_handle_array_wrapper(&x);
+  test_handle_array_wrapper_helper(&x);
   struct WrappedStruct *p = (struct WrappedStruct*) x.y; // expected-warning{{Casting a non-structure type to a structure type and accessing a field can lead to memory access errors or data corruption.}}
   return p->z;  // no-warning
 }
@@ -671,7 +673,7 @@ typedef void (^RDar_7462324_Callback)(id obj);
   builder = ^(id object) {
     id x;
     if (object) {
-      builder(x); // expected-warning{{Function call argument is an uninitialized value}}
+      builder(x); // expected-warning{{Block call argument is an uninitialized value}}
     }
   };
   builder(target);
@@ -918,7 +920,7 @@ int rdar_7770737_pos(void)
 
 void pr6302(id x, Class y) {
   // This previously crashed the analyzer (reported in PR 6302)
-  x->isa  = y;
+  x->isa  = y; // expected-warning {{direct access to objective-c's isa is deprecated in favor of object_setClass() and object_getClass()}}
 }
 
 //===----------------------------------------------------------------------===//
@@ -1237,3 +1239,125 @@ void pr9048(pr9048_cdev_t dev, struct pr9048_diskslices * ssp, unsigned int slic
   }
 }
 
+// Test Store reference counting in the presence of Lazy compound values.
+// This previously caused an infinite recursion.
+typedef struct {} Rdar_9103310_A;
+typedef struct Rdar_9103310_B Rdar_9103310_B_t;
+struct Rdar_9103310_B {
+  unsigned char           Rdar_9103310_C[101];
+};
+void Rdar_9103310_E(Rdar_9103310_A * x, struct Rdar_9103310_C * b) { // expected-warning {{declaration of 'struct Rdar_9103310_C' will not be visible outside of this function}}
+  char Rdar_9103310_D[4][4] = { "a", "b", "c", "d"};
+  int i;
+  Rdar_9103310_B_t *y = (Rdar_9103310_B_t *) x;
+  for (i = 0; i < 101; i++) {
+    Rdar_9103310_F(b, "%2d%s ", (y->Rdar_9103310_C[i]) / 4, Rdar_9103310_D[(y->Rdar_9103310_C[i]) % 4]); // expected-warning {{implicit declaration of function 'Rdar_9103310_F' is invalid in C99}}
+  }
+}
+
+// Test handling binding lazy compound values to a region and then have
+// specific elements have other bindings.
+int PR9455() {
+  char arr[4] = "000";
+  arr[0] = '1';
+  if (arr[1] == '0')
+    return 1;
+  int *p = 0;
+  *p = 0xDEADBEEF; // no-warning
+  return 1;
+}
+int PR9455_2() {
+  char arr[4] = "000";
+  arr[0] = '1';
+  if (arr[1] == '0') {
+    int *p = 0;
+    *p = 0xDEADBEEF; // expected-warning {{null}}
+  }
+  return 1;
+}
+
+// Test initialization of substructs via lazy compound values.
+typedef float RDar9163742_Float;
+
+typedef struct {
+    RDar9163742_Float x, y;
+} RDar9163742_Point;
+typedef struct {
+    RDar9163742_Float width, height;
+} RDar9163742_Size;
+typedef struct {
+    RDar9163742_Point origin;
+    RDar9163742_Size size;
+} RDar9163742_Rect;
+
+extern  RDar9163742_Rect RDar9163742_RectIntegral(RDar9163742_Rect);
+
+RDar9163742_Rect RDar9163742_IntegralRect(RDar9163742_Rect frame)
+{
+    RDar9163742_Rect integralFrame;
+    integralFrame.origin.x = frame.origin.x;
+    integralFrame.origin.y = frame.origin.y;
+    integralFrame.size = frame.size;
+    return RDar9163742_RectIntegral(integralFrame); // no-warning; all fields initialized
+}
+
+// Test correct handling of prefix '--' operator.
+void rdar9444714() {
+  int   x;
+  char    str[ 32 ];
+  char    buf[ 32 ];
+  char *  dst;
+  char *  ptr;
+
+  x = 1234;
+  dst = str;
+  ptr = buf;
+  do
+  {
+    *ptr++ = (char)( '0' + ( x % 10 ) );
+    x /= 10;  
+  } while( x > 0 );
+
+  while( ptr > buf )
+  {
+    *dst++ = *( --( ptr ) ); // no-warning
+  }
+  *dst = '\0';
+}
+
+// Test handling symbolic elements with field accesses.
+// <rdar://problem/11127008>
+typedef struct {
+    unsigned value;
+} RDar11127008;
+
+signed rdar_11127008_index();
+
+static unsigned rdar_11127008(void) {
+    RDar11127008 values[] = {{.value = 0}, {.value = 1}};
+    signed index = rdar_11127008_index();
+    if (index < 0) return 0;
+    if (index >= 2) return 0;
+    return values[index].value;
+}
+
+// Test handling invalidating arrays passed to a block via captured
+// pointer value (not a __block variable).
+typedef void (^radar11125868_cb)(int *, unsigned);
+
+void rdar11125868_aux(radar11125868_cb cb);
+
+int rdar11125868() {
+  int integersStackArray[1];
+  int *integers = integersStackArray;
+  rdar11125868_aux(^(int *integerValue, unsigned index) {
+      integers[index] = integerValue[index];
+    });
+  return integers[0] == 0; // no-warning
+}
+
+int rdar11125868_positive() {
+  int integersStackArray[1];
+  int *integers = integersStackArray;
+  return integers[0] == 0; // expected-warning {{he left operand of '==' is a}}
+}

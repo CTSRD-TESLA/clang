@@ -50,7 +50,7 @@ void f() {
   template<typename T> class X; // expected-error{{expression}}
 }
 
-template<typename T> class X1 { } var; // expected-error{{declared as a template}}
+template<typename T> class X1 var; // expected-error{{declared as a template}}
 
 namespace M {
 }
@@ -73,4 +73,67 @@ namespace PR8001 {
     Foo<int>::Baz x;
     Foo<int>::Bar<int> y(x);
   }
+}
+
+namespace rdar9676205 {
+  template <unsigned, class _Tp> class tuple_element;
+
+  template <class _T1, class _T2> class pair;
+
+  template <class _T1, class _T2>
+  class tuple_element<0, pair<_T1, _T2> >
+  {
+    template <class _Tp>
+    struct X
+    {
+      template <class _Up, bool = X<_Up>::value>
+      struct Y
+        : public X<_Up>,
+          public Y<_Up>
+      { };
+    };
+  };
+}
+
+namespace redecl {
+  int A; // expected-note {{here}}
+  template<typename T> struct A; // expected-error {{different kind of symbol}}
+
+  int B; // expected-note {{here}}
+  template<typename T> struct B { // expected-error {{different kind of symbol}}
+  };
+
+  template<typename T> struct F;
+  template<typename T> struct K;
+
+  int G, H; // expected-note {{here}}
+
+  struct S {
+    int C; // expected-note {{here}}
+    template<typename T> struct C; // expected-error {{different kind of symbol}}
+
+    int D; // expected-note {{here}}
+    template<typename T> struct D { // expected-error {{different kind of symbol}}
+    };
+
+    int E;
+    template<typename T> friend struct E { // expected-error {{cannot define a type in a friend}}
+    };
+
+    int F;
+    template<typename T> friend struct F; // ok, redecl::F
+
+    template<typename T> struct G; // ok
+
+    template<typename T> friend struct H; // expected-error {{different kind of symbol}}
+
+    int I, J, K;
+
+    struct U {
+      template<typename T> struct I; // ok
+      template<typename T> struct J { // ok
+      };
+      template<typename T> friend struct K; // ok, redecl::K
+    };
+  };
 }

@@ -12,13 +12,8 @@
 
 #include "clang/Driver/Job.h"
 #include "clang/Driver/Util.h"
-
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/SmallVector.h"
-
-namespace llvm {
-  class raw_ostream;
-}
+#include "llvm/Support/Path.h"
 
 namespace clang {
 namespace driver {
@@ -61,6 +56,13 @@ class Compilation {
   /// Result files which should be removed on failure.
   ArgStringList ResultFiles;
 
+  /// Result files which are generated correctly on failure, and which should
+  /// only be removed if we crash.
+  ArgStringList FailureResultFiles;
+
+  /// Redirection for stdout, stderr, etc.
+  const llvm::sys::Path **Redirects;
+
 public:
   Compilation(const Driver &D, const ToolChain &DefaultToolChain,
               InputArgList *Args, DerivedArgList *TranslatedArgs);
@@ -74,6 +76,8 @@ public:
 
   const DerivedArgList &getArgs() const { return *TranslatedArgs; }
 
+  DerivedArgList &getArgs() { return *TranslatedArgs; }
+
   ActionList &getActions() { return Actions; }
   const ActionList &getActions() const { return Actions; }
 
@@ -85,6 +89,13 @@ public:
   const ArgStringList &getTempFiles() const { return TempFiles; }
 
   const ArgStringList &getResultFiles() const { return ResultFiles; }
+
+  const ArgStringList &getFailureResultFiles() const {
+    return FailureResultFiles;
+  }
+
+  /// Returns the sysroot path.
+  StringRef getSysRoot() const;
 
   /// getArgsForToolChain - Return the derived argument list for the
   /// tool chain \arg TC (or the default tool chain, if TC is not
@@ -108,6 +119,13 @@ public:
     return Name;
   }
 
+  /// addFailureResultFile - Add a file to remove if we crash, and returns its
+  /// argument.
+  const char *addFailureResultFile(const char *Name) {
+    FailureResultFiles.push_back(Name);
+    return Name;
+  }
+
   /// CleanupFileList - Remove the files in the given list.
   ///
   /// \param IssueErrors - Report failures as errors.
@@ -121,7 +139,7 @@ public:
   /// \param J - The job to print.
   /// \param Terminator - A string to print at the end of the line.
   /// \param Quote - Should separate arguments be quoted.
-  void PrintJob(llvm::raw_ostream &OS, const Job &J,
+  void PrintJob(raw_ostream &OS, const Job &J,
                 const char *Terminator, bool Quote) const;
 
   /// ExecuteCommand - Execute an actual command.
@@ -137,6 +155,11 @@ public:
   /// Command which failed.
   /// \return The accumulated result code of the job.
   int ExecuteJob(const Job &J, const Command *&FailingCommand) const;
+
+  /// initCompilationForDiagnostics - Remove stale state and suppress output
+  /// so compilation can be reexecuted to generate additional diagnostic
+  /// information (e.g., preprocessed source(s)).
+  void initCompilationForDiagnostics();
 };
 
 } // end namespace driver

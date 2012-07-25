@@ -1,7 +1,5 @@
-// RUN: %clang_cc1 -analyze -analyzer-checker=core,macosx.CFNumber -analyzer-store=basic -analyzer-constraints=basic -verify -triple x86_64-apple-darwin9 %s
-// RUN: %clang_cc1 -analyze -analyzer-checker=core,macosx.CFNumber -analyzer-store=basic -analyzer-constraints=range -verify -triple x86_64-apple-darwin9 %s
-// RUN: %clang_cc1 -analyze -analyzer-checker=core,macosx.CFNumber -analyzer-store=region -analyzer-constraints=basic -verify -triple x86_64-apple-darwin9 %s
-// RUN: %clang_cc1 -analyze -analyzer-checker=core,macosx.CFNumber -analyzer-store=region -analyzer-constraints=range -verify -triple x86_64-apple-darwin9 %s
+// RUN: %clang_cc1 -analyze -analyzer-checker=core,osx.coreFoundation.CFNumber,osx.cocoa.RetainCount -analyzer-store=region -analyzer-constraints=basic -verify -triple x86_64-apple-darwin9 %s
+// RUN: %clang_cc1 -analyze -analyzer-checker=core,osx.coreFoundation.CFNumber,osx.cocoa.RetainCount -analyzer-store=region -analyzer-constraints=range -verify -triple x86_64-apple-darwin9 %s
 
 typedef signed long CFIndex;
 typedef const struct __CFAllocator * CFAllocatorRef;
@@ -22,8 +20,13 @@ CFNumberRef f1(unsigned char x) {
   return CFNumberCreate(0, kCFNumberSInt16Type, &x);  // expected-warning{{An 8 bit integer is used to initialize a CFNumber object that represents a 16 bit integer. 8 bits of the CFNumber value will be garbage.}}
 }
 
-CFNumberRef f2(unsigned short x) {
+__attribute__((cf_returns_retained)) CFNumberRef f2(unsigned short x) {
   return CFNumberCreate(0, kCFNumberSInt8Type, &x); // expected-warning{{A 16 bit integer is used to initialize a CFNumber object that represents an 8 bit integer. 8 bits of the input integer will be lost.}}
+}
+
+// test that the attribute overrides the naming convention.
+__attribute__((cf_returns_not_retained)) CFNumberRef CreateNum(unsigned char x) {
+  return CFNumberCreate(0, kCFNumberSInt8Type, &x); // expected-warning{{leak}}
 }
 
 CFNumberRef f3(unsigned i) {

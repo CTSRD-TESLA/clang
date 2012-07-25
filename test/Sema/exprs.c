@@ -12,6 +12,14 @@
   } while (0)
 
 
+// Test that we don't report divide-by-zero errors in unreachable code.
+// This test should be left as is, as it also tests CFG functionality.
+void radar9171946() {
+  if (0) {
+    0 / (0 ? 1 : 0); // expected-warning {{expression result unused}}
+  }
+}
+
 int test_pr8876() {
   PR8876(0); // no-warning
   PR8876_pos(0); // expected-warning{{indirection of non-volatile null pointer will be deleted, not trap}} expected-note{{consider using __builtin_trap() or qualifying pointer with 'volatile'}}
@@ -154,11 +162,20 @@ void test17(int x) {
   x = sizeof(x/0);  // no warning.
 }
 
-// PR6501
-void test18_a(int a);
+// PR6501 & PR11857
+void test18_a(int a); // expected-note 2 {{'test18_a' declared here}}
+void test18_b(int); // expected-note {{'test18_b' declared here}}
+void test18_c(int a, int b); // expected-note 2 {{'test18_c' declared here}}
+void test18_d(int a, ...); // expected-note {{'test18_d' declared here}}
+void test18_e(int a, int b, ...); // expected-note {{'test18_e' declared here}}
 void test18(int b) {
-  test18_a(b, b); // expected-error {{too many arguments to function call, expected 1, have 2}}
-  test18_a(); // expected-error {{too few arguments to function call, expected 1, have 0}}
+  test18_a(b, b); // expected-error {{too many arguments to function call, expected single argument 'a', have 2}}
+  test18_a(); // expected-error {{too few arguments to function call, single argument 'a' was not specified}}
+  test18_b(); // expected-error {{too few arguments to function call, expected 1, have 0}}
+  test18_c(b); // expected-error {{too few arguments to function call, expected 2, have 1}}
+  test18_c(b, b, b); // expected-error {{too many arguments to function call, expected 2, have 3}}
+  test18_d(); // expected-error {{too few arguments to function call, at least argument 'a' must be specified}}
+  test18_e(); // expected-error {{too few arguments to function call, expected at least 2, have 0}}
 }
 
 // PR7569
@@ -166,15 +183,53 @@ void test19() {
   *(int*)0 = 0;   // expected-warning {{indirection of non-volatile null pointer}} \
                   // expected-note {{consider using __builtin_trap}}
   *(volatile int*)0 = 0;  // Ok.
+
+  // rdar://9269271
+  int x = *(int*)0;  // expected-warning {{indirection of non-volatile null pointer}} \
+                     // expected-note {{consider using __builtin_trap}}
+  int x2 = *(volatile int*)0; // Ok.
+  int *p = &(*(int*)0); // Ok;
 }
 
 int test20(int x) {
-  return x && 4; // expected-warning {{use of logical && with constant operand; switch to bitwise & or remove constant}}
+  return x && 4; // expected-warning {{use of logical '&&' with constant operand}} \
+                 // expected-note {{use '&' for a bitwise operation}} \
+                 // expected-note {{remove constant to silence this warning}}
 
   return x && sizeof(int) == 4;  // no warning, RHS is logical op.
   
   // no warning, this is an idiom for "true" in old C style.
   return x && (signed char)1;
+
+  return x || 0;
+  return x || 1;
+  return x || -1; // expected-warning {{use of logical '||' with constant operand}} \
+                  // expected-note {{use '|' for a bitwise operation}}
+  return x || 5; // expected-warning {{use of logical '||' with constant operand}} \
+                 // expected-note {{use '|' for a bitwise operation}}
+  return x && 0;
+  return x && 1;
+  return x && -1; // expected-warning {{use of logical '&&' with constant operand}} \
+                  // expected-note {{use '&' for a bitwise operation}} \
+                  // expected-note {{remove constant to silence this warning}}
+  return x && 5; // expected-warning {{use of logical '&&' with constant operand}} \
+                 // expected-note {{use '&' for a bitwise operation}} \
+                 // expected-note {{remove constant to silence this warning}}
+  return x || (0);
+  return x || (1);
+  return x || (-1); // expected-warning {{use of logical '||' with constant operand}} \
+                    // expected-note {{use '|' for a bitwise operation}}
+  return x || (5); // expected-warning {{use of logical '||' with constant operand}} \
+                   // expected-note {{use '|' for a bitwise operation}}
+  return x && (0);
+  return x && (1);
+  return x && (-1); // expected-warning {{use of logical '&&' with constant operand}} \
+                    // expected-note {{use '&' for a bitwise operation}} \
+                    // expected-note {{remove constant to silence this warning}}
+  return x && (5); // expected-warning {{use of logical '&&' with constant operand}} \
+                   // expected-note {{use '&' for a bitwise operation}} \
+                   // expected-note {{remove constant to silence this warning}}
+
 }
 
 struct Test21; // expected-note 2 {{forward declaration}}

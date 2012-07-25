@@ -1,7 +1,5 @@
 set(LLVM_LINK_COMPONENTS support)
 
-set(LLVM_USED_LIBS clangBasic)
-
 add_clang_library(clangAST
   APValue.cpp
   ASTConsumer.cpp
@@ -10,6 +8,12 @@ add_clang_library(clangAST
   ASTImporter.cpp
   AttrImpl.cpp
   CXXInheritance.cpp
+  Comment.cpp
+  CommentBriefParser.cpp
+  CommentDumper.cpp
+  CommentLexer.cpp
+  CommentParser.cpp
+  CommentSema.cpp
   Decl.cpp
   DeclarationName.cpp
   DeclBase.cpp
@@ -28,13 +32,17 @@ add_clang_library(clangAST
   InheritViz.cpp
   ItaniumCXXABI.cpp
   ItaniumMangle.cpp
+  LambdaMangleContext.cpp
   Mangle.cpp
   MicrosoftCXXABI.cpp
   MicrosoftMangle.cpp
   NestedNameSpecifier.cpp
+  NSAPI.cpp
   ParentMap.cpp
+  RawCommentList.cpp
   RecordLayout.cpp
   RecordLayoutBuilder.cpp
+  SelectorLocationsKind.cpp
   Stmt.cpp
   StmtDumper.cpp
   StmtIterator.cpp
@@ -46,7 +54,23 @@ add_clang_library(clangAST
   Type.cpp
   TypeLoc.cpp
   TypePrinter.cpp
+  VTableBuilder.cpp
+  VTTBuilder.cpp
   )
 
-add_dependencies(clangAST ClangARMNeon ClangAttrClasses ClangAttrList 
-                 ClangAttrImpl ClangDiagnosticAST ClangDeclNodes ClangStmtNodes)
+add_dependencies(clangAST
+  ClangARMNeon
+  ClangAttrClasses
+  ClangAttrList
+  ClangAttrImpl
+  ClangDiagnosticAST
+  ClangDiagnosticComment
+  ClangCommentNodes
+  ClangDeclNodes
+  ClangStmtNodes
+  )
+
+target_link_libraries(clangAST
+  clangBasic
+  clangLex
+  )

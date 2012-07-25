@@ -1,8 +1,5 @@
-// RUN: %clang_cc1 -analyze -analyzer-checker=core -analyzer-store=basic -verify -fobjc-gc -analyzer-constraints=basic %s  -Wno-implicit-function-declaration
-// RUN: %clang_cc1 -analyze -analyzer-checker=core -analyzer-store=basic -verify -fobjc-gc -analyzer-constraints=range %s  -Wno-implicit-function-declaration
-// RUN: %clang_cc1 -analyze -analyzer-checker=core -analyzer-store=basic -verify -fobjc-gc -disable-free %s  -Wno-implicit-function-declaration
-// RUN: %clang_cc1 -analyze -analyzer-checker=core -analyzer-store=region -analyzer-constraints=basic -verify -fobjc-gc %s  -Wno-implicit-function-declaration
-// RUN: %clang_cc1 -analyze -analyzer-checker=core -analyzer-store=region -analyzer-constraints=range -verify -fobjc-gc %s  -Wno-implicit-function-declaration
+// RUN: %clang_cc1 -analyze -analyzer-checker=core,osx.cocoa.RetainCount -analyzer-store=region -analyzer-constraints=basic -verify -fobjc-gc %s  -Wno-implicit-function-declaration
+// RUN: %clang_cc1 -analyze -analyzer-checker=core,osx.cocoa.RetainCount -analyzer-store=region -analyzer-constraints=range -verify -fobjc-gc %s  -Wno-implicit-function-declaration
 
 //===----------------------------------------------------------------------===//
 // The following code is reduced using delta-debugging from
@@ -45,7 +42,7 @@ CFAbsoluteTime f1_use_after_release() {
   [NSMakeCollectable(date) release];
   CFDateGetAbsoluteTime(date); // no-warning
   CFRelease(date);
-  t = CFDateGetAbsoluteTime(date);   // expected-warning{{Reference-counted object is used after it is released.}}
+  t = CFDateGetAbsoluteTime(date);   // expected-warning{{Reference-counted object is used after it is released}}
   return t;
 }
 
@@ -58,7 +55,7 @@ CFAbsoluteTime f2_use_after_release() {
   [(id) CFMakeCollectable(date) release];
   CFDateGetAbsoluteTime(date); // no-warning
   CFRelease(date);
-  t = CFDateGetAbsoluteTime(date);   // expected-warning{{Reference-counted object is used after it is released.}}
+  t = CFDateGetAbsoluteTime(date);   // expected-warning{{Reference-counted object is used after it is released}}
   return t;
 }
 

@@ -37,7 +37,7 @@ public:
   virtual void TypeRead(serialization::TypeIdx Idx, QualType T);
   virtual void DeclRead(serialization::DeclID ID, const Decl *D);
   virtual void SelectorRead(serialization::SelectorID iD, Selector Sel);
-  virtual void MacroDefinitionRead(serialization::MacroID, 
+  virtual void MacroDefinitionRead(serialization::PreprocessedEntityID, 
                                    MacroDefinition *MD);
 private:
   std::vector<ASTDeserializationListener*> Listeners;
@@ -79,7 +79,7 @@ void MultiplexASTDeserializationListener::SelectorRead(
 }
 
 void MultiplexASTDeserializationListener::MacroDefinitionRead(
-    serialization::MacroID ID, MacroDefinition *MD) {
+    serialization::PreprocessedEntityID ID, MacroDefinition *MD) {
   for (size_t i = 0, e = Listeners.size(); i != e; ++i)
     Listeners[i]->MacroDefinitionRead(ID, MD);
 }
@@ -89,19 +89,28 @@ void MultiplexASTDeserializationListener::MacroDefinitionRead(
 class MultiplexASTMutationListener : public ASTMutationListener {
 public:
   // Does NOT take ownership of the elements in L.
-  MultiplexASTMutationListener(const std::vector<ASTMutationListener*>& L);
+  MultiplexASTMutationListener(ArrayRef<ASTMutationListener*> L);
   virtual void CompletedTagDefinition(const TagDecl *D);
   virtual void AddedVisibleDecl(const DeclContext *DC, const Decl *D);
   virtual void AddedCXXImplicitMember(const CXXRecordDecl *RD, const Decl *D);
   virtual void AddedCXXTemplateSpecialization(const ClassTemplateDecl *TD,
                                     const ClassTemplateSpecializationDecl *D);
+  virtual void AddedCXXTemplateSpecialization(const FunctionTemplateDecl *TD,
+                                              const FunctionDecl *D);
+  virtual void CompletedImplicitDefinition(const FunctionDecl *D);
+  virtual void StaticDataMemberInstantiated(const VarDecl *D);
+  virtual void AddedObjCCategoryToInterface(const ObjCCategoryDecl *CatD,
+                                            const ObjCInterfaceDecl *IFD);
+  virtual void AddedObjCPropertyInClassExtension(const ObjCPropertyDecl *Prop,
+                                            const ObjCPropertyDecl *OrigProp,
+                                            const ObjCCategoryDecl *ClassExt);
 private:
   std::vector<ASTMutationListener*> Listeners;
 };
 
 MultiplexASTMutationListener::MultiplexASTMutationListener(
-    const std::vector<ASTMutationListener*>& L)
-    : Listeners(L) {
+    ArrayRef<ASTMutationListener*> L)
+    : Listeners(L.begin(), L.end()) {
 }
 
 void MultiplexASTMutationListener::CompletedTagDefinition(const TagDecl *D) {
@@ -125,12 +134,41 @@ void MultiplexASTMutationListener::AddedCXXTemplateSpecialization(
   for (size_t i = 0, e = Listeners.size(); i != e; ++i)
     Listeners[i]->AddedCXXTemplateSpecialization(TD, D);
 }
+void MultiplexASTMutationListener::AddedCXXTemplateSpecialization(
+    const FunctionTemplateDecl *TD, const FunctionDecl *D) {
+  for (size_t i = 0, e = Listeners.size(); i != e; ++i)
+    Listeners[i]->AddedCXXTemplateSpecialization(TD, D);
+}
+void MultiplexASTMutationListener::CompletedImplicitDefinition(
+                                                        const FunctionDecl *D) {
+  for (size_t i = 0, e = Listeners.size(); i != e; ++i)
+    Listeners[i]->CompletedImplicitDefinition(D);
+}
+void MultiplexASTMutationListener::StaticDataMemberInstantiated(
+                                                             const VarDecl *D) {
+  for (size_t i = 0, e = Listeners.size(); i != e; ++i)
+    Listeners[i]->StaticDataMemberInstantiated(D);
+}
+void MultiplexASTMutationListener::AddedObjCCategoryToInterface(
+                                                 const ObjCCategoryDecl *CatD,
+                                                 const ObjCInterfaceDecl *IFD) {
+  for (size_t i = 0, e = Listeners.size(); i != e; ++i)
+    Listeners[i]->AddedObjCCategoryToInterface(CatD, IFD);
+}
+void MultiplexASTMutationListener::AddedObjCPropertyInClassExtension(
+                                             const ObjCPropertyDecl *Prop,
+                                             const ObjCPropertyDecl *OrigProp,
+                                             const ObjCCategoryDecl *ClassExt) {
+  for (size_t i = 0, e = Listeners.size(); i != e; ++i)
+    Listeners[i]->AddedObjCPropertyInClassExtension(Prop, OrigProp, ClassExt);
+}
 
 }  // end namespace clang
 
 
-MultiplexConsumer::MultiplexConsumer(const std::vector<ASTConsumer*>& C)
-    : Consumers(C), MutationListener(0), DeserializationListener(0) {
+MultiplexConsumer::MultiplexConsumer(ArrayRef<ASTConsumer*> C)
+    : Consumers(C.begin(), C.end()),
+      MutationListener(0), DeserializationListener(0) {
   // Collect the mutation listeners and deserialization listeners of all
   // children, and create a multiplex listener each if so.
   std::vector<ASTMutationListener*> mutationListeners;
@@ -164,9 +202,16 @@ void MultiplexConsumer::Initialize(ASTContext &Context) {
     Consumers[i]->Initialize(Context);
 }
 
-void MultiplexConsumer::HandleTopLevelDecl(DeclGroupRef D) {
+bool MultiplexConsumer::HandleTopLevelDecl(DeclGroupRef D) {
+  bool Continue = true;
   for (size_t i = 0, e = Consumers.size(); i != e; ++i)
-    Consumers[i]->HandleTopLevelDecl(D);
+    Continue = Continue && Consumers[i]->HandleTopLevelDecl(D);
+  return Continue;
+}
+
+void  MultiplexConsumer::HandleCXXStaticMemberVarInstantiation(VarDecl *VD) {
+  for (size_t i = 0, e = Consumers.size(); i != e; ++i)
+    Consumers[i]->HandleCXXStaticMemberVarInstantiation(VD);
 }
 
 void MultiplexConsumer::HandleInterestingDecl(DeclGroupRef D) {
@@ -182,6 +227,16 @@ void MultiplexConsumer::HandleTranslationUnit(ASTContext &Ctx) {
 void MultiplexConsumer::HandleTagDeclDefinition(TagDecl *D) {
   for (size_t i = 0, e = Consumers.size(); i != e; ++i)
     Consumers[i]->HandleTagDeclDefinition(D);
+}
+
+void MultiplexConsumer::HandleCXXImplicitFunctionInstantiation(FunctionDecl *D){
+  for (size_t i = 0, e = Consumers.size(); i != e; ++i)
+    Consumers[i]->HandleCXXImplicitFunctionInstantiation(D);
+}
+
+void MultiplexConsumer::HandleTopLevelDeclInObjCContainer(DeclGroupRef D) {
+  for (size_t i = 0, e = Consumers.size(); i != e; ++i)
+    Consumers[i]->HandleTopLevelDeclInObjCContainer(D);
 }
 
 void MultiplexConsumer::CompleteTentativeDefinition(VarDecl *D) {

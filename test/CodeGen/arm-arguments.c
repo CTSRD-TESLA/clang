@@ -1,3 +1,4 @@
+// REQUIRES: arm-registered-target
 // RUN: %clang_cc1 -triple armv7-apple-darwin9 -target-abi apcs-gnu -emit-llvm -w -o - %s | FileCheck -check-prefix=APCS-GNU %s
 // RUN: %clang_cc1 -triple armv7-apple-darwin9 -target-abi aapcs -emit-llvm -w -o - %s | FileCheck -check-prefix=AAPCS %s
 
@@ -28,13 +29,13 @@ struct s4 { struct s4_0 { int f0; } f0; };
 struct s4 f4(void) {}
 
 // APCS-GNU: define void @f5(
-// APCS-GNU: struct.s5* sret
+// APCS-GNU: struct.s5* noalias sret
 // AAPCS: define arm_aapcscc i32 @f5()
 struct s5 { struct { } f0; int f1; };
 struct s5 f5(void) {}
 
 // APCS-GNU: define void @f6(
-// APCS-GNU: struct.s6* sret
+// APCS-GNU: struct.s6* noalias sret
 // AAPCS: define arm_aapcscc i32 @f6()
 struct s6 { int f0[1]; };
 struct s6 f6(void) {}
@@ -45,7 +46,7 @@ struct s7 { struct { int : 0; } f0; };
 struct s7 f7(void) {}
 
 // APCS-GNU: define void @f8(
-// APCS-GNU: struct.s8* sret
+// APCS-GNU: struct.s8* noalias sret
 // AAPCS: define arm_aapcscc void @f8()
 struct s8 { struct { int : 0; } f0[1]; };
 struct s8 f8(void) {}
@@ -61,7 +62,7 @@ struct s10 { int f0; int : 0; int : 0; };
 struct s10 f10(void) {}
 
 // APCS-GNU: define void @f11(
-// APCS-GNU: struct.s10* sret
+// APCS-GNU: struct.s11* noalias sret
 // AAPCS: define arm_aapcscc i32 @f11()
 struct s11 { int : 0; int f0; };
 struct s11 f11(void) {}
@@ -72,7 +73,7 @@ union u12 { char f0; short f1; int f2; };
 union u12 f12(void) {}
 
 // APCS-GNU: define void @f13(
-// APCS-GNU: struct.s13* sret
+// APCS-GNU: struct.s13* noalias sret
 
 // FIXME: This should return a float.
 // AAPCS-FIXME: darm_aapcscc efine float @f13()
@@ -80,7 +81,7 @@ struct s13 { float f0; };
 struct s13 f13(void) {}
 
 // APCS-GNU: define void @f14(
-// APCS-GNU: struct.s13* sret
+// APCS-GNU: union.u14* noalias sret
 // AAPCS: define arm_aapcscc i32 @f14()
 union u14 { float f0; };
 union u14 f14(void) {}
@@ -104,13 +105,13 @@ struct s18 { short f0; char f1 : 4; };
 struct s18 f18(void) {}
 
 // APCS-GNU: define void @f19(
-// APCS-GNU: struct.s19* sret
+// APCS-GNU: struct.s19* noalias sret
 // AAPCS: define arm_aapcscc i32 @f19()
 struct s19 { int f0; struct s8 f1; };
 struct s19 f19(void) {}
 
 // APCS-GNU: define void @f20(
-// APCS-GNU: struct.s20* sret
+// APCS-GNU: struct.s20* noalias sret
 // AAPCS: define arm_aapcscc i32 @f20()
 struct s20 { struct s8 f1; int f0; };
 struct s20 f20(void) {}
@@ -128,10 +129,10 @@ struct s21 f21(void) {}
 // APCS-GNU: define i128 @f27()
 // AAPCS: define arm_aapcscc i16 @f22()
 // AAPCS: define arm_aapcscc i32 @f23()
-// AAPCS: define arm_aapcscc void @f24({{.*}} sret
-// AAPCS: define arm_aapcscc void @f25({{.*}} sret
-// AAPCS: define arm_aapcscc void @f26({{.*}} sret
-// AAPCS: define arm_aapcscc void @f27({{.*}} sret
+// AAPCS: define arm_aapcscc void @f24({{.*}} noalias sret
+// AAPCS: define arm_aapcscc void @f25({{.*}} noalias sret
+// AAPCS: define arm_aapcscc void @f26({{.*}} noalias sret
+// AAPCS: define arm_aapcscc void @f27({{.*}} noalias sret
 _Complex char       f22(void) {}
 _Complex short      f23(void) {}
 _Complex int        f24(void) {}
@@ -149,7 +150,19 @@ struct s28 f28() {}
 struct s29 { _Complex short f0; };
 struct s29 f29() {}
 
-// APCS-GNU: define void @f30({{.*}} sret
-// AAPCS: define arm_aapcscc void @f30({{.*}} sret
+// APCS-GNU: define void @f30({{.*}} noalias sret
+// AAPCS: define arm_aapcscc void @f30({{.*}} noalias sret
 struct s30 { _Complex int f0; };
 struct s30 f30() {}
+
+// PR11905
+struct s31 { char x; };
+void f31(struct s31 s) { }
+// AAPCS: @f31([1 x i32] %s.coerce)
+// AAPCS: %s = alloca %struct.s31, align 4
+// AAPCS: alloca [1 x i32]
+// AAPCS: store [1 x i32] %s.coerce, [1 x i32]*
+// APCS-GNU: @f31([1 x i32] %s.coerce)
+// APCS-GNU: %s = alloca %struct.s31, align 4
+// APCS-GNU: alloca [1 x i32]
+// APCS-GNU: store [1 x i32] %s.coerce, [1 x i32]*

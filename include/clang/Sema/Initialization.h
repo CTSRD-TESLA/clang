@@ -1,4 +1,4 @@
-//===--- SemaInit.h - Semantic Analysis for Initializers --------*- C++ -*-===//
+//===--- Initialization.h - Semantic Analysis for Initializers --*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -15,16 +15,13 @@
 
 #include "clang/Sema/Ownership.h"
 #include "clang/Sema/Overload.h"
+#include "clang/AST/ASTContext.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/UnresolvedSet.h"
 #include "clang/Basic/SourceLocation.h"
 #include "llvm/ADT/PointerIntPair.h"
 #include "llvm/ADT/SmallVector.h"
 #include <cassert>
-
-namespace llvm {
-  class raw_ostream;
-}
 
 namespace clang {
   
@@ -65,13 +62,19 @@ public:
     /// \brief The entity being initialized is a base member subobject.
     EK_Base,
     /// \brief The initialization is being done by a delegating constructor.
-    EK_Delegation,
+    EK_Delegating,
     /// \brief The entity being initialized is an element of a vector.
     /// or vector.
     EK_VectorElement,
     /// \brief The entity being initialized is a field of block descriptor for
     /// the copied-in c++ object.
-    EK_BlockElement
+    EK_BlockElement,
+    /// \brief The entity being initialized is the real or imaginary part of a
+    /// complex number.
+    EK_ComplexElement,
+    /// \brief The entity being initialized is the field that captures a 
+    /// variable in a lambda.
+    EK_LambdaCapture
   };
   
 private:
@@ -86,22 +89,27 @@ private:
   QualType Type;
   
   union {
-    /// \brief When Kind == EK_Variable, EK_Parameter, or EK_Member, 
-    /// the VarDecl, ParmVarDecl, or FieldDecl, respectively.
+    /// \brief When Kind == EK_Variable, or EK_Member, the VarDecl or
+    /// FieldDecl, respectively.
     DeclaratorDecl *VariableOrMember;
+
+    /// \brief When Kind == EK_Parameter, the ParmVarDecl, with the
+    /// low bit indicating whether the parameter is "consumed".
+    uintptr_t Parameter;
     
     /// \brief When Kind == EK_Temporary, the type source information for
     /// the temporary.
     TypeSourceInfo *TypeInfo;
     
     struct {
-      /// \brief When Kind == EK_Result, EK_Exception, or EK_New, the
+      /// \brief When Kind == EK_Result, EK_Exception, EK_New, the
       /// location of the 'return', 'throw', or 'new' keyword,
       /// respectively. When Kind == EK_Temporary, the location where
       /// the temporary is being created.
       unsigned Location;
       
-      /// \brief Whether the 
+      /// \brief Whether the entity being initialized may end up using the
+      /// named return value optimization (NRVO).
       bool NRVO;
     } LocAndNRVO;
     
@@ -110,9 +118,18 @@ private:
     /// virtual base.
     uintptr_t Base;
 
-    /// \brief When Kind == EK_ArrayElement or EK_VectorElement, the
-    /// index of the array or vector element being initialized. 
+    /// \brief When Kind == EK_ArrayElement, EK_VectorElement, or
+    /// EK_ComplexElement, the index of the array or vector element being
+    /// initialized. 
     unsigned Index;
+    
+    struct {
+      /// \brief The variable being captured by an EK_LambdaCapture.
+      VarDecl *Var;
+      
+      /// \brief The source location at which the capture occurs.
+      unsigned Location;
+    } Capture;
   };
 
   InitializedEntity() { }
@@ -121,11 +138,6 @@ private:
   InitializedEntity(VarDecl *Var)
     : Kind(EK_Variable), Parent(0), Type(Var->getType()),
       VariableOrMember(Var) { }
-  
-  /// \brief Create the initialization entity for a parameter.
-  InitializedEntity(ParmVarDecl *Parm)
-    : Kind(EK_Parameter), Parent(0), Type(Parm->getType().getUnqualifiedType()),
-      VariableOrMember(Parm) { }
   
   /// \brief Create the initialization entity for the result of a
   /// function, throwing an object, performing an explicit cast, or
@@ -147,6 +159,14 @@ private:
   InitializedEntity(ASTContext &Context, unsigned Index, 
                     const InitializedEntity &Parent);
 
+  /// \brief Create the initialization entity for a lambda capture.
+  InitializedEntity(VarDecl *Var, FieldDecl *Field, SourceLocation Loc)
+    : Kind(EK_LambdaCapture), Parent(0), Type(Field->getType()) 
+  {
+    Capture.Var = Var;
+    Capture.Location = Loc.getRawEncoding();
+  }
+  
 public:
   /// \brief Create the initialization entity for a variable.
   static InitializedEntity InitializeVariable(VarDecl *Var) {
@@ -156,20 +176,29 @@ public:
   /// \brief Create the initialization entity for a parameter.
   static InitializedEntity InitializeParameter(ASTContext &Context,
                                                ParmVarDecl *Parm) {
-    InitializedEntity Res(Parm);
-    Res.Type = Context.getVariableArrayDecayedType(Res.Type);
-    return Res;
+    bool Consumed = (Context.getLangOpts().ObjCAutoRefCount &&
+                     Parm->hasAttr<NSConsumedAttr>());
+
+    InitializedEntity Entity;
+    Entity.Kind = EK_Parameter;
+    Entity.Type = Context.getVariableArrayDecayedType(
+                                       Parm->getType().getUnqualifiedType());
+    Entity.Parent = 0;
+    Entity.Parameter
+      = (static_cast<uintptr_t>(Consumed) | reinterpret_cast<uintptr_t>(Parm));
+    return Entity;
   }
 
   /// \brief Create the initialization entity for a parameter that is
   /// only known by its type.
   static InitializedEntity InitializeParameter(ASTContext &Context,
-                                               QualType Type) {
+                                               QualType Type,
+                                               bool Consumed) {
     InitializedEntity Entity;
     Entity.Kind = EK_Parameter;
     Entity.Type = Context.getVariableArrayDecayedType(Type);
     Entity.Parent = 0;
-    Entity.VariableOrMember = 0;
+    Entity.Parameter = (Consumed);
     return Entity;
   }
 
@@ -197,7 +226,9 @@ public:
   
   /// \brief Create the initialization entity for a temporary.
   static InitializedEntity InitializeTemporary(QualType Type) {
-    return InitializedEntity(EK_Temporary, SourceLocation(), Type);
+    InitializedEntity Result(EK_Temporary, SourceLocation(), Type);
+    Result.TypeInfo = 0;
+    return Result;
   }
 
   /// \brief Create the initialization entity for a temporary.
@@ -215,7 +246,7 @@ public:
 
   /// \brief Create the initialization entity for a delegated constructor.
   static InitializedEntity InitializeDelegation(QualType Type) {
-    return InitializedEntity(EK_Delegation, SourceLocation(), Type);
+    return InitializedEntity(EK_Delegating, SourceLocation(), Type);
   }
   
   /// \brief Create the initialization entity for a member subobject.
@@ -237,11 +268,18 @@ public:
     return InitializedEntity(Context, Index, Parent);
   }
 
+  /// \brief Create the initialization entity for a lambda capture.
+  static InitializedEntity InitializeLambdaCapture(VarDecl *Var,
+                                                   FieldDecl *Field,
+                                                   SourceLocation Loc) {
+    return InitializedEntity(Var, Field, Loc);
+  }
+                                                   
   /// \brief Determine the kind of initialization.
   EntityKind getKind() const { return Kind; }
   
   /// \brief Retrieve the parent of the entity being initialized, when
-  /// the initialization itself is occuring within the context of a
+  /// the initialization itself is occurring within the context of a
   /// larger initialization.
   const InitializedEntity *getParent() const { return Parent; }
 
@@ -267,6 +305,13 @@ public:
   /// \brief Determine whether this initialization allows the named return 
   /// value optimization, which also applies to thrown objects.
   bool allowsNRVO() const;
+
+  /// \brief Determine whether this initialization consumes the
+  /// parameter.
+  bool isParameterConsumed() const {
+    assert(getKind() == EK_Parameter && "Not a parameter");
+    return (Parameter & 1);
+  }
                                   
   /// \brief Retrieve the base specifier.
   CXXBaseSpecifier *getBaseSpecifier() const {
@@ -286,7 +331,7 @@ public:
     assert(getKind() == EK_Result && "No 'return' location!");
     return SourceLocation::getFromRawEncoding(LocAndNRVO.Location);
   }
-  
+
   /// \brief Determine the location of the 'throw' keyword when initializing
   /// an exception object.
   SourceLocation getThrowLoc() const {
@@ -297,8 +342,22 @@ public:
   /// \brief If this is already the initializer for an array or vector
   /// element, sets the element index.
   void setElementIndex(unsigned Index) {
-    assert(getKind() == EK_ArrayElement || getKind() == EK_VectorElement);
+    assert(getKind() == EK_ArrayElement || getKind() == EK_VectorElement ||
+           getKind() == EK_ComplexElement);
     this->Index = Index;
+  }
+
+  /// \brief Retrieve the variable for a captured variable in a lambda.
+  VarDecl *getCapturedVar() const {
+    assert(getKind() == EK_LambdaCapture && "Not a lambda capture!");
+    return Capture.Var;
+  }
+  
+  /// \brief Determine the location of the capture when initializing
+  /// field from a captured variable in a lambda.
+  SourceLocation getCaptureLoc() const {
+    assert(getKind() == EK_LambdaCapture && "Not a lambda capture!");
+    return SourceLocation::getFromRawEncoding(Capture.Location);
   }
 };
   
@@ -309,34 +368,36 @@ class InitializationKind {
 public:
   /// \brief The kind of initialization being performed.
   enum InitKind {
-    IK_Direct,  ///< Direct initialization
-    IK_Copy,    ///< Copy initialization
-    IK_Default, ///< Default initialization
-    IK_Value    ///< Value initialization
+    IK_Direct,       ///< Direct initialization
+    IK_DirectList,   ///< Direct list-initialization
+    IK_Copy,         ///< Copy initialization
+    IK_Default,      ///< Default initialization
+    IK_Value         ///< Value initialization
   };
   
 private:
-  /// \brief The kind of initialization that we're storing.
-  enum StoredInitKind {
-    SIK_Direct = IK_Direct,   ///< Direct initialization
-    SIK_Copy = IK_Copy,       ///< Copy initialization
-    SIK_Default = IK_Default, ///< Default initialization
-    SIK_Value = IK_Value,     ///< Value initialization
-    SIK_ImplicitValue,        ///< Implicit value initialization
-    SIK_DirectCast,  ///< Direct initialization due to a cast
-    /// \brief Direct initialization due to a C-style or functional cast.
-    SIK_DirectCStyleOrFunctionalCast
+  /// \brief The context of the initialization.
+  enum InitContext {
+    IC_Normal,         ///< Normal context
+    IC_ExplicitConvs,  ///< Normal context, but allows explicit conversion funcs
+    IC_Implicit,       ///< Implicit context (value initialization)
+    IC_StaticCast,     ///< Static cast context
+    IC_CStyleCast,     ///< C-style cast context
+    IC_FunctionalCast  ///< Functional cast context
   };
   
   /// \brief The kind of initialization being performed.
-  StoredInitKind Kind;
+  InitKind Kind : 8;
+
+  /// \brief The context of the initialization.
+  InitContext Context : 8;
   
   /// \brief The source locations involved in the initialization.
   SourceLocation Locations[3];
   
-  InitializationKind(StoredInitKind Kind, SourceLocation Loc1, 
+  InitializationKind(InitKind Kind, InitContext Context, SourceLocation Loc1, 
                      SourceLocation Loc2, SourceLocation Loc3)
-    : Kind(Kind) 
+    : Kind(Kind), Context(Context)
   {
     Locations[0] = Loc1;
     Locations[1] = Loc2;
@@ -348,27 +409,53 @@ public:
   static InitializationKind CreateDirect(SourceLocation InitLoc,
                                          SourceLocation LParenLoc,
                                          SourceLocation RParenLoc) {
-    return InitializationKind(SIK_Direct, InitLoc, LParenLoc, RParenLoc);
+    return InitializationKind(IK_Direct, IC_Normal,
+                              InitLoc, LParenLoc, RParenLoc);
   }
 
-  /// \brief Create a direct initialization due to a cast.
-  static InitializationKind CreateCast(SourceRange TypeRange,
-                                       bool IsCStyleCast) {
-    return InitializationKind(IsCStyleCast? SIK_DirectCStyleOrFunctionalCast
-                                          : SIK_DirectCast,
-                              TypeRange.getBegin(), TypeRange.getBegin(), 
-                              TypeRange.getEnd());
+  static InitializationKind CreateDirectList(SourceLocation InitLoc) {
+    return InitializationKind(IK_DirectList, IC_Normal,
+                              InitLoc, InitLoc, InitLoc);
+  }
+
+  /// \brief Create a direct initialization due to a cast that isn't a C-style 
+  /// or functional cast.
+  static InitializationKind CreateCast(SourceRange TypeRange) {
+    return InitializationKind(IK_Direct, IC_StaticCast, TypeRange.getBegin(),
+                              TypeRange.getBegin(), TypeRange.getEnd());
   }
   
+  /// \brief Create a direct initialization for a C-style cast.
+  static InitializationKind CreateCStyleCast(SourceLocation StartLoc,
+                                             SourceRange TypeRange,
+                                             bool InitList) {
+    // C++ cast syntax doesn't permit init lists, but C compound literals are
+    // exactly that.
+    return InitializationKind(InitList ? IK_DirectList : IK_Direct,
+                              IC_CStyleCast, StartLoc, TypeRange.getBegin(),
+                              TypeRange.getEnd());
+  }
+
+  /// \brief Create a direct initialization for a functional cast.
+  static InitializationKind CreateFunctionalCast(SourceRange TypeRange,
+                                                 bool InitList) {
+    return InitializationKind(InitList ? IK_DirectList : IK_Direct,
+                              IC_FunctionalCast, TypeRange.getBegin(),
+                              TypeRange.getBegin(), TypeRange.getEnd());
+  }
+
   /// \brief Create a copy initialization.
   static InitializationKind CreateCopy(SourceLocation InitLoc,
-                                       SourceLocation EqualLoc) {
-    return InitializationKind(SIK_Copy, InitLoc, EqualLoc, EqualLoc);
+                                       SourceLocation EqualLoc,
+                                       bool AllowExplicitConvs = false) {
+    return InitializationKind(IK_Copy, 
+                              AllowExplicitConvs? IC_ExplicitConvs : IC_Normal,
+                              InitLoc, EqualLoc, EqualLoc);
   }
   
   /// \brief Create a default initialization.
   static InitializationKind CreateDefault(SourceLocation InitLoc) {
-    return InitializationKind(SIK_Default, InitLoc, InitLoc, InitLoc);
+    return InitializationKind(IK_Default, IC_Normal, InitLoc, InitLoc, InitLoc);
   }
   
   /// \brief Create a value initialization.
@@ -376,34 +463,39 @@ public:
                                         SourceLocation LParenLoc,
                                         SourceLocation RParenLoc,
                                         bool isImplicit = false) {
-    return InitializationKind(isImplicit? SIK_ImplicitValue : SIK_Value, 
+    return InitializationKind(IK_Value, isImplicit ? IC_Implicit : IC_Normal,
                               InitLoc, LParenLoc, RParenLoc);
   }
   
   /// \brief Determine the initialization kind.
   InitKind getKind() const {
-    if (Kind > SIK_ImplicitValue)
-      return IK_Direct;
-    if (Kind == SIK_ImplicitValue)
-      return IK_Value;
-
-    return (InitKind)Kind;
+    return Kind;
   }
   
   /// \brief Determine whether this initialization is an explicit cast.
   bool isExplicitCast() const {
-    return Kind == SIK_DirectCast || Kind == SIK_DirectCStyleOrFunctionalCast;
+    return Context >= IC_StaticCast;
   }
   
   /// \brief Determine whether this initialization is a C-style cast.
   bool isCStyleOrFunctionalCast() const { 
-    return Kind == SIK_DirectCStyleOrFunctionalCast; 
+    return Context >= IC_CStyleCast; 
+  }
+
+  /// \brief Determine whether this is a C-style cast.
+  bool isCStyleCast() const {
+    return Context == IC_CStyleCast;
+  }
+
+  /// \brief Determine whether this is a functional-style cast.
+  bool isFunctionalCast() const {
+    return Context == IC_FunctionalCast;
   }
 
   /// \brief Determine whether this initialization is an implicit
   /// value-initialization, e.g., as occurs during aggregate
   /// initialization.
-  bool isImplicitValueInit() const { return Kind == SIK_ImplicitValue; }
+  bool isImplicitValueInit() const { return Context == IC_Implicit; }
 
   /// \brief Retrieve the location at which initialization is occurring.
   SourceLocation getLocation() const { return Locations[0]; }
@@ -416,16 +508,26 @@ public:
   /// \brief Retrieve the location of the equal sign for copy initialization
   /// (if present).
   SourceLocation getEqualLoc() const {
-    assert(Kind == SIK_Copy && "Only copy initialization has an '='");
+    assert(Kind == IK_Copy && "Only copy initialization has an '='");
     return Locations[1];
   }
-  
-  bool isCopyInit() const { return Kind == SIK_Copy; }
+
+  bool isCopyInit() const { return Kind == IK_Copy; }
+
+  /// \brief Retrieve whether this initialization allows the use of explicit
+  ///        constructors.
+  bool AllowExplicit() const { return !isCopyInit(); }
+
+  /// \brief Retrieve whether this initialization allows the use of explicit
+  /// conversion functions.
+  bool allowExplicitConversionFunctions() const {
+    return !isCopyInit() || Context == IC_ExplicitConvs;
+  }
   
   /// \brief Retrieve the source range containing the locations of the open
   /// and closing parentheses for value and direct initializations.
   SourceRange getParenRange() const {
-    assert((getKind() == IK_Direct || Kind == SIK_Value) &&
+    assert((Kind == IK_Direct || Kind == IK_Value) &&
            "Only direct- and value-initialization have parentheses");
     return SourceRange(Locations[1], Locations[2]);
   }
@@ -436,48 +538,18 @@ public:
 class InitializationSequence {
 public:
   /// \brief Describes the kind of initialization sequence computed.
-  ///
-  /// FIXME: Much of this information is in the initialization steps... why is
-  /// it duplicated here?
   enum SequenceKind {
     /// \brief A failed initialization sequence. The failure kind tells what
     /// happened.
     FailedSequence = 0,
-    
+
     /// \brief A dependent initialization, which could not be
     /// type-checked due to the presence of dependent types or
-    /// dependently-type expressions.
+    /// dependently-typed expressions.
     DependentSequence,
 
-    /// \brief A user-defined conversion sequence.
-    UserDefinedConversion,
-    
-    /// \brief A constructor call.
-    ConstructorInitialization,
-    
-    /// \brief A reference binding.
-    ReferenceBinding,
-
-    /// \brief List initialization
-    ListInitialization,
-    
-    /// \brief Zero-initialization.
-    ZeroInitialization,
-    
-    /// \brief No initialization required.
-    NoInitialization,
-    
-    /// \brief Standard conversion sequence.
-    StandardConversion,
-
-    /// \brief C conversion sequence.
-    CAssignment,
-
-    /// \brief String initialization
-    StringInit,
-
-    /// \brief Array initialization from another array (GNU C extension).
-    ArrayInit
+    /// \brief A normal sequence.
+    NormalSequence
   };
   
   /// \brief Describes the kind of a particular step in an initialization
@@ -511,8 +583,14 @@ public:
     SK_QualificationConversionLValue,
     /// \brief Perform an implicit conversion sequence.
     SK_ConversionSequence,
-    /// \brief Perform list-initialization
+    /// \brief Perform list-initialization without a constructor
     SK_ListInitialization,
+    /// \brief Perform list-initialization with a constructor.
+    SK_ListConstructorCall,
+    /// \brief Unwrap the single-element initializer list for a reference.
+    SK_UnwrapInitList,
+    /// \brief Rewrap the single-element initializer list for a reference.
+    SK_RewrapInitList,
     /// \brief Perform initialization via a constructor.
     SK_ConstructorInitialization,
     /// \brief Zero-initialize the object
@@ -526,7 +604,18 @@ public:
     SK_ObjCObjectConversion,
     /// \brief Array initialization (from an array rvalue).
     /// This is a GNU C extension.
-    SK_ArrayInit
+    SK_ArrayInit,
+    /// \brief Array initialization from a parenthesized initializer list.
+    /// This is a GNU C++ extension.
+    SK_ParenthesizedArrayInit,
+    /// \brief Pass an object by indirect copy-and-restore.
+    SK_PassByIndirectCopyRestore,
+    /// \brief Pass an object by indirect restore.
+    SK_PassByIndirectRestore,
+    /// \brief Produce an Objective-C object pointer.
+    SK_ProduceObjCObject,
+    /// \brief Construct a std::initializer_list from an initializer list.
+    SK_StdInitializerList
   };
   
   /// \brief A single step in the initialization sequence.
@@ -542,20 +631,28 @@ public:
       /// \brief When Kind == SK_ResolvedOverloadedFunction or Kind ==
       /// SK_UserConversion, the function that the expression should be 
       /// resolved to or the conversion function to call, respectively.
+      /// When Kind == SK_ConstructorInitialization or SK_ListConstruction,
+      /// the constructor to be called.
       ///
-      /// Always a FunctionDecl.
+      /// Always a FunctionDecl, plus a Boolean flag telling if it was
+      /// selected from an overloaded set having size greater than 1.
       /// For conversion decls, the naming class is the source type.
       /// For construct decls, the naming class is the target type.
       struct {
+        bool HadMultipleCandidates;
         FunctionDecl *Function;
         DeclAccessPair FoundDecl;
       } Function;
-      
+
       /// \brief When Kind = SK_ConversionSequence, the implicit conversion
-      /// sequence 
+      /// sequence.
       ImplicitConversionSequence *ICS;
+
+      /// \brief When Kind = SK_RewrapInitList, the syntactic form of the
+      /// wrapping list.
+      InitListExpr *WrappingSyntacticList;
     };
-    
+
     void Destroy();
   };
   
@@ -564,7 +661,7 @@ private:
   enum SequenceKind SequenceKind;
   
   /// \brief Steps taken by this initialization.
-  llvm::SmallVector<Step, 4> Steps;
+  SmallVector<Step, 4> Steps;
   
 public:
   /// \brief Describes why initialization failed.
@@ -597,6 +694,8 @@ public:
     FK_ReferenceInitFailed,
     /// \brief Implicit conversion failed.
     FK_ConversionFailed,
+    /// \brief Implicit conversion failed.
+    FK_ConversionFromPropertyFailed,
     /// \brief Too many initializers for scalar
     FK_TooManyInitsForScalar,
     /// \brief Reference initialization from an initializer list
@@ -606,16 +705,30 @@ public:
     FK_InitListBadDestinationType,
     /// \brief Overloading for a user-defined conversion failed.
     FK_UserConversionOverloadFailed,
-    /// \brief Overloaded for initialization by constructor failed.
+    /// \brief Overloading for initialization by constructor failed.
     FK_ConstructorOverloadFailed,
+    /// \brief Overloading for list-initialization by constructor failed.
+    FK_ListConstructorOverloadFailed,
     /// \brief Default-initialization of a 'const' object.
     FK_DefaultInitOfConst,
     /// \brief Initialization of an incomplete type.
-    FK_Incomplete
+    FK_Incomplete,
+    /// \brief Variable-length array must not have an initializer.
+    FK_VariableLengthArrayHasInitializer,
+    /// \brief List initialization failed at some point.
+    FK_ListInitializationFailed,
+    /// \brief Initializer has a placeholder type which cannot be
+    /// resolved by initialization.
+    FK_PlaceholderType,
+    /// \brief Failed to initialize a std::initializer_list because copy
+    /// construction of some element failed.
+    FK_InitListElementCopyFailure,
+    /// \brief List-copy-initialization chose an explicit constructor.
+    FK_ExplicitConstructor
   };
   
 private:
-  /// \brief The reason why initialization failued.
+  /// \brief The reason why initialization failed.
   FailureKind Failure;
 
   /// \brief The failed result of overload resolution.
@@ -624,6 +737,9 @@ private:
   /// \brief The candidate set created when initialization failed.
   OverloadCandidateSet FailedCandidateSet;
 
+  /// \brief The incomplete type that caused a failure.
+  QualType FailedIncompleteType;
+  
   /// \brief Prints a follow-up note that highlights the location of
   /// the initialized entity, if it's remote.
   void PrintInitLocationNote(Sema &S, const InitializedEntity &Entity);
@@ -662,7 +778,7 @@ public:
   /// \param Kind the kind of initialization being performed.
   ///
   /// \param Args the argument(s) provided for initialization, ownership of
-  /// which is transfered into the routine.
+  /// which is transferred into the routine.
   ///
   /// \param ResultType if non-NULL, will be set to the type of the
   /// initialized object, which is the type of the declaration in most
@@ -695,9 +811,12 @@ public:
   void setSequenceKind(enum SequenceKind SK) { SequenceKind = SK; }
   
   /// \brief Determine whether the initialization sequence is valid.
-  operator bool() const { return SequenceKind != FailedSequence; }
+  operator bool() const { return !Failed(); }
+
+  /// \brief Determine whether the initialization sequence is invalid.
+  bool Failed() const { return SequenceKind == FailedSequence; }
   
-  typedef llvm::SmallVector<Step, 4>::const_iterator step_iterator;
+  typedef SmallVector<Step, 4>::const_iterator step_iterator;
   step_iterator step_begin() const { return Steps.begin(); }
   step_iterator step_end()   const { return Steps.end(); }
 
@@ -711,22 +830,34 @@ public:
   /// \brief Determine whether this initialization is direct call to a 
   /// constructor.
   bool isConstructorInitialization() const;
-  
+
+  /// \brief Returns whether the last step in this initialization sequence is a
+  /// narrowing conversion, defined by C++0x [dcl.init.list]p7.
+  ///
+  /// If this function returns true, *isInitializerConstant will be set to
+  /// describe whether *Initializer was a constant expression.  If
+  /// *isInitializerConstant is set to true, *ConstantValue will be set to the
+  /// evaluated value of *Initializer.
+  bool endsWithNarrowing(ASTContext &Ctx, const Expr *Initializer,
+                         bool *isInitializerConstant,
+                         APValue *ConstantValue) const;
+
   /// \brief Add a new step in the initialization that resolves the address
   /// of an overloaded function to a specific function declaration.
   ///
   /// \param Function the function to which the overloaded function reference
   /// resolves.
   void AddAddressOverloadResolutionStep(FunctionDecl *Function,
-                                        DeclAccessPair Found);
-  
+                                        DeclAccessPair Found,
+                                        bool HadMultipleCandidates);
+
   /// \brief Add a new step in the initialization that performs a derived-to-
   /// base cast.
   ///
   /// \param BaseType the base type to which we will be casting.
   ///
-  /// \param IsLValue true if the result of this cast will be treated as 
-  /// an lvalue.
+  /// \param Category Indicates whether the result will be treated as an
+  /// rvalue, an xvalue, or an lvalue.
   void AddDerivedToBaseCastStep(QualType BaseType,
                                 ExprValueKind Category);
      
@@ -735,9 +866,6 @@ public:
   /// \param BindingTemporary True if we are binding a reference to a temporary
   /// object (thereby extending its lifetime); false if we are binding to an
   /// lvalue or an lvalue treated as an rvalue.
-  ///
-  /// \param UnnecessaryCopy True if we should check for a copy
-  /// constructor for a completely unnecessary but
   void AddReferenceBindingStep(QualType T, bool BindingTemporary);
 
   /// \brief Add a new step that makes an extraneous copy of the input
@@ -756,8 +884,9 @@ public:
   /// a constructor or a conversion function.
   void AddUserConversionStep(FunctionDecl *Function,
                              DeclAccessPair FoundDecl,
-                             QualType T);
-  
+                             QualType T,
+                             bool HadMultipleCandidates);
+
   /// \brief Add a new step that performs a qualification conversion to the
   /// given type.
   void AddQualificationConversionStep(QualType Ty,
@@ -767,17 +896,23 @@ public:
   void AddConversionSequenceStep(const ImplicitConversionSequence &ICS,
                                  QualType T);
 
-  /// \brief Add a list-initialiation step  
+  /// \brief Add a list-initialization step.
   void AddListInitializationStep(QualType T);
 
   /// \brief Add a constructor-initialization step.
+  ///
+  /// \arg FromInitList The constructor call is syntactically an initializer
+  /// list.
+  /// \arg AsInitList The constructor is called as an init list constructor.
   void AddConstructorInitializationStep(CXXConstructorDecl *Constructor,
                                         AccessSpecifier Access,
-                                        QualType T);
+                                        QualType T,
+                                        bool HadMultipleCandidates,
+                                        bool FromInitList, bool AsInitList);
 
   /// \brief Add a zero-initialization step.
   void AddZeroInitializationStep(QualType T);
-  
+
   /// \brief Add a C assignment step.
   //
   // FIXME: It isn't clear whether this should ever be needed;
@@ -795,10 +930,30 @@ public:
   /// \brief Add an array initialization step.
   void AddArrayInitStep(QualType T);
 
+  /// \brief Add a parenthesized array initialization step.
+  void AddParenthesizedArrayInitStep(QualType T);
+
+  /// \brief Add a step to pass an object by indirect copy-restore.
+  void AddPassByIndirectCopyRestoreStep(QualType T, bool shouldCopy);
+
+  /// \brief Add a step to "produce" an Objective-C object (by
+  /// retaining it).
+  void AddProduceObjCObjectStep(QualType T);
+
+  /// \brief Add a step to construct a std::initializer_list object from an
+  /// initializer list.
+  void AddStdInitializerListConstructionStep(QualType T);
+
+  /// \brief Add steps to unwrap a initializer list for a reference around a
+  /// single element and rewrap it at the end.
+  void RewrapReferenceInitList(QualType T, InitListExpr *Syntactic);
+
   /// \brief Note that this initialization sequence failed.
   void SetFailed(FailureKind Failure) {
     SequenceKind = FailedSequence;
     this->Failure = Failure;
+    assert((Failure != FK_Incomplete || !FailedIncompleteType.isNull()) &&
+           "Incomplete type failure requires a type!");
   }
   
   /// \brief Note that this initialization sequence failed due to failed
@@ -811,21 +966,28 @@ public:
     return FailedCandidateSet;
   }
 
-  /// brief Get the overloading result, for when the initialization
+  /// \brief Get the overloading result, for when the initialization
   /// sequence failed due to a bad overload.
   OverloadingResult getFailedOverloadResult() const {
     return FailedOverloadResult;
   }
 
+  /// \brief Note that this initialization sequence failed due to an
+  /// incomplete type.
+  void setIncompleteTypeFailure(QualType IncompleteType) {
+    FailedIncompleteType = IncompleteType;
+    SetFailed(FK_Incomplete);
+  }
+
   /// \brief Determine why initialization failed.
   FailureKind getFailureKind() const {
-    assert(getKind() == FailedSequence && "Not an initialization failure!");
+    assert(Failed() && "Not an initialization failure!");
     return Failure;
   }
 
   /// \brief Dump a representation of this initialization sequence to 
   /// the given stream, for debugging purposes.
-  void dump(llvm::raw_ostream &OS) const;
+  void dump(raw_ostream &OS) const;
   
   /// \brief Dump a representation of this initialization sequence to 
   /// standard error, for debugging purposes.

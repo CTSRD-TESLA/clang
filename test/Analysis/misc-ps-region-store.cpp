@@ -1,5 +1,5 @@
-// RUN: %clang_cc1 -triple i386-apple-darwin9 -analyze -analyzer-checker=core,core.experimental -analyzer-store=region -verify -fblocks -analyzer-opt-analyze-nested-blocks %s
-// RUN: %clang_cc1 -triple x86_64-apple-darwin9 -analyze -analyzer-checker=core,core.experimental -analyzer-store=region -verify -fblocks   -analyzer-opt-analyze-nested-blocks %s
+// RUN: %clang_cc1 -triple i386-apple-darwin9 -analyze -analyzer-checker=core,experimental.core -analyzer-store=region -verify -fblocks -analyzer-opt-analyze-nested-blocks %s -fexceptions -fcxx-exceptions
+// RUN: %clang_cc1 -triple x86_64-apple-darwin9 -analyze -analyzer-checker=core,experimental.core -analyzer-store=region -verify -fblocks   -analyzer-opt-analyze-nested-blocks %s -fexceptions -fcxx-exceptions
 
 // Test basic handling of references.
 char &test1_aux();
@@ -238,5 +238,377 @@ void test_namespace() {
   // Previously triggered a crash.
   using namespace fum;
   int x = i;
+}
+
+// Test handling methods that accept references as parameters, and that
+// variables are properly invalidated.
+class RDar9203355 {
+  bool foo(unsigned valA, long long &result) const;
+  bool foo(unsigned valA, int &result) const;
+};
+bool RDar9203355::foo(unsigned valA, int &result) const {
+  long long val;
+  if (foo(valA, val) ||
+      (int)val != val) // no-warning
+    return true;
+  result = val; // no-warning
+  return false;
+}
+
+// Test handling of new[].
+void rdar9212512() {
+  int *x = new int[10];
+  for (unsigned i = 0 ; i < 2 ; ++i) {
+    // This previously triggered an uninitialized values warning.
+    x[i] = 1;  // no-warning
+  }
+}
+
+// Test basic support for dynamic_cast<>.
+struct Rdar9212495_C { virtual void bar() const; };
+class Rdar9212495_B : public Rdar9212495_C {};
+class Rdar9212495_A : public Rdar9212495_B {};
+const Rdar9212495_A& rdar9212495(const Rdar9212495_C* ptr) {
+  const Rdar9212495_A& val = dynamic_cast<const Rdar9212495_A&>(*ptr);
+  
+  if (&val == 0) {
+    val.bar(); // FIXME: This should eventually be a null dereference.
+  }
+  
+  return val;
+}
+
+// Test constructors invalidating arguments.  Previously this raised
+// an uninitialized value warning.
+extern "C" void __attribute__((noreturn)) PR9645_exit(int i);
+
+class PR9645_SideEffect
+{
+public:
+  PR9645_SideEffect(int *pi); // caches pi in i_
+  void Read(int *pi); // copies *pi into *i_
+private:
+  int *i_;
+};
+
+void PR9645() {
+  int i;
+
+  PR9645_SideEffect se(&i);
+  int j = 1;
+  se.Read(&j); // this has a side-effect of initializing i.
+
+  PR9645_exit(i); // no-warning
+}
+
+PR9645_SideEffect::PR9645_SideEffect(int *pi) : i_(pi) {}
+void PR9645_SideEffect::Read(int *pi) { *i_ = *pi; }
+
+// Invalidate fields during C++ method calls.
+class RDar9267815 {
+  int x;
+  void test();
+  void test_pos();
+  void test2();
+  void invalidate();
+};
+
+void RDar9267815::test_pos() {
+  int *p = 0;
+  if (x == 42)
+    return;
+  *p = 0xDEADBEEF; // expected-warning {{null}}
+}
+void RDar9267815::test() {
+  int *p = 0;
+  if (x == 42)
+    return;
+  if (x == 42)
+    *p = 0xDEADBEEF; // no-warning
+}
+
+void RDar9267815::test2() {
+  int *p = 0;
+  if (x == 42)
+    return;
+  invalidate();
+  if (x == 42)
+    *p = 0xDEADBEEF; // expected-warning {{null}}
+}
+
+// Test reference parameters.
+void test_ref_double_aux(double &Value);
+float test_ref_double() {
+  double dVal;
+  test_ref_double_aux(dVal);
+  // This previously warned because 'dVal' was thought to be uninitialized.
+  float Val = (float)dVal; // no-warning
+  return Val;
+}
+
+// Test invalidation of class fields.
+class TestInvalidateClass {
+public:
+  int x;
+};
+
+void test_invalidate_class_aux(TestInvalidateClass &x);
+
+int test_invalidate_class() {
+  TestInvalidateClass y;
+  test_invalidate_class_aux(y);
+  return y.x; // no-warning
+}
+
+// Test correct pointer arithmetic using 'p--'.  This is to warn that we
+// were loading beyond the written characters in buf.
+char *RDar9269695(char *dst, unsigned int n)
+{
+  char buff[40], *p;
+
+  p = buff;
+  do
+    *p++ = '0' + n % 10;
+  while (n /= 10);
+
+  do
+    *dst++ = *--p; // no-warning
+  while (p != buff);
+
+  return dst;
+}
+
+// Test that we invalidate byref arguments passed to constructors.
+class TestInvalidateInCtor {
+public:
+  TestInvalidateInCtor(unsigned &x);
+};
+
+unsigned test_invalidate_in_ctor() {
+  unsigned x;
+  TestInvalidateInCtor foo(x);
+  return x; // no-warning
+}
+unsigned test_invalidate_in_ctor_new() {
+  unsigned x;
+  delete (new TestInvalidateInCtor(x));
+  return x; // no-warning
+}
+
+// Test assigning into a symbolic offset.
+struct TestAssignIntoSymbolicOffset {
+  int **stuff[100];
+  void test(int x, int y);
+};
+
+void TestAssignIntoSymbolicOffset::test(int x, int y) {
+  x--;
+  if (x > 8 || x < 0)
+    return;
+  if (stuff[x])
+    return;
+  if (!stuff[x]) {
+    stuff[x] = new int*[y+1];
+    // Previously triggered a null dereference.
+    stuff[x][y] = 0; // no-warning
+  }
+}
+
+// Test loads from static fields.  This previously triggered an uninitialized
+// value warning.
+class ClassWithStatic {
+public:
+    static const unsigned value = 1;
+};
+
+int rdar9948787_negative() {
+    ClassWithStatic classWithStatic;
+    unsigned value = classWithStatic.value;
+    if (value == 1)
+      return 1;
+    int *p = 0;
+    *p = 0xDEADBEEF; // no-warning
+    return 0;
+}
+
+int rdar9948787_positive() {
+    ClassWithStatic classWithStatic;
+    unsigned value = classWithStatic.value;
+    if (value == 0)
+      return 1;
+    int *p = 0;
+    *p = 0xDEADBEEF; // expected-warning {{null}}
+    return 0;
+}
+
+// Regression test against global constants and switches.
+enum rdar10202899_ValT { rdar10202899_ValTA, rdar10202899_ValTB, rdar10202899_ValTC };
+const rdar10202899_ValT val = rdar10202899_ValTA;
+void rdar10202899_test1() {
+  switch (val) {
+    case rdar10202899_ValTA: {}
+  };
+}
+
+void rdar10202899_test2() {
+  if (val == rdar10202899_ValTA)
+   return;
+  int *p = 0;
+  *p = 0xDEADBEEF;
+}
+
+void rdar10202899_test3() {
+  switch (val) {
+    case rdar10202899_ValTA: return;
+    default: ;
+  };
+  int *p = 0;
+  *p = 0xDEADBEEF;
+}
+
+// This used to crash the analyzer because of the unnamed bitfield.
+void PR11249()
+{
+  struct {
+    char f1:4;
+    char   :4;
+    char f2[1];
+    char f3;
+  } V = { 1, {2}, 3 };
+  int *p = 0;
+  if (V.f1 != 1)
+    *p = 0xDEADBEEF;  // no-warning
+  if (V.f2[0] != 2)
+    *p = 0xDEADBEEF;  // no-warning
+  if (V.f3 != 3)
+    *p = 0xDEADBEEF;  // no-warning
+}
+
+// Handle doing a load from the memory associated with the code for
+// a function.
+extern double nan( const char * );
+double PR11450() {
+  double NaN = *(double*) nan;
+  return NaN;
+}
+
+// Test that 'this' is assumed non-null upon analyzing the entry to a "top-level"
+// function (i.e., when not analyzing from a specific caller).
+struct TestNullThis {
+  int field;
+  void test();
+};
+
+void TestNullThis::test() {
+  int *p = &field;
+  if (p)
+    return;
+  field = 2; // no-warning
+}
+
+// Test handling of 'catch' exception variables, and not warning
+// about uninitialized values.
+enum MyEnum { MyEnumValue };
+MyEnum rdar10892489() {
+  try {
+      throw MyEnumValue;
+  } catch (MyEnum e) {
+      return e; // no-warning
+  }
+  return MyEnumValue;
+}
+
+MyEnum rdar10892489_positive() {
+  try {
+    throw MyEnumValue;
+  } catch (MyEnum e) {
+    int *p = 0;
+    *p = 0xDEADBEEF; // expected-warning {{null}}
+    return e;
+  }
+  return MyEnumValue;
+}
+
+// Test handling of catch with no condition variable.
+void PR11545() {
+  try
+  {
+      throw;
+  }
+  catch (...)
+  {
+  }
+}
+
+void PR11545_positive() {
+  try
+  {
+      throw;
+  }
+  catch (...)
+  {
+    int *p = 0;
+    *p = 0xDEADBEEF; // expected-warning {{null}}
+  }
+}
+
+// Test handling taking the address of a field.  While the analyzer
+// currently doesn't do anything intelligent here, this previously
+// resulted in a crash.
+class PR11146 {
+public:
+  struct Entry;
+  void baz();
+};
+
+struct PR11146::Entry {
+  int x;
+};
+
+void PR11146::baz() {
+  (void) &Entry::x;
+}
+
+// Test symbolicating a reference.  In this example, the
+// analyzer (originally) didn't know how to handle x[index - index2],
+// returning an UnknownVal.  The conjured symbol wasn't a location,
+// and would result in a crash.
+void rdar10924675(unsigned short x[], int index, int index2) {
+  unsigned short &y = x[index - index2];
+  if (y == 0)
+    return;
+}
+
+// Test handling CXXScalarValueInitExprs.
+void rdar11401827() {
+  int x = int();
+  if (!x) {
+    int *p = 0;
+    *p = 0xDEADBEEF; // expected-warning {{null pointer}}
+  }
+  else {
+    int *p = 0;
+    *p = 0xDEADBEEF;
+  }
+}
+
+//===---------------------------------------------------------------------===//
+// Handle inlining of C++ method calls.
+//===---------------------------------------------------------------------===//
+
+struct A {
+  int *p;
+  void foo(int *q) {
+    p = q;
+  }
+  void bar() {
+    *p = 0; // expected-warning {{null pointer}}
+  }
+};
+
+void test_inline() {
+  A a;
+  a.foo(0);
+  a.bar();
 }
 

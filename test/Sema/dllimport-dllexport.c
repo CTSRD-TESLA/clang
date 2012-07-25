@@ -1,4 +1,5 @@
 // RUN: %clang_cc1 -triple i386-mingw32 -fsyntax-only -verify %s
+// RUN: %clang_cc1 -triple x86_64-mingw32 -fsyntax-only -verify %s
 
 inline void __attribute__((dllexport)) foo1(){} // expected-warning{{dllexport attribute ignored}}
 inline void __attribute__((dllimport)) foo2(){} // expected-warning{{dllimport attribute ignored}}
@@ -34,3 +35,9 @@ typedef int __declspec(dllimport) type2; // expected-warning{{'dllimport' attrib
 
 void __declspec(dllimport) foo12();
 void foo12(){} // expected-warning {{'foo12' redeclared without dllimport attribute: previous dllimport ignored}}
+
+void __attribute__((dllimport)) foo13(); // expected-warning{{dllimport attribute ignored}}
+void __attribute__((dllexport)) foo13();
+
+extern int foo14 __attribute__((dllexport));
+extern int foo14 __attribute__((dllimport));  // expected-warning{{dllimport attribute ignored}}

@@ -31,103 +31,167 @@
 #include <algorithm>
 using namespace clang;
 
-void clang::ProcessWarningOptions(Diagnostic &Diags,
+// EmitUnknownDiagWarning - Emit a warning and typo hint for unknown warning
+// opts
+static void EmitUnknownDiagWarning(DiagnosticsEngine &Diags,
+                                  StringRef Prefix, StringRef Opt,
+                                  bool isPositive) {
+  StringRef Suggestion = DiagnosticIDs::getNearestWarningOption(Opt);
+  if (!Suggestion.empty())
+    Diags.Report(isPositive? diag::warn_unknown_warning_option_suggest :
+                             diag::warn_unknown_negative_warning_option_suggest)
+      << (Prefix.str() += Opt) << (Prefix.str() += Suggestion);
+  else
+    Diags.Report(isPositive? diag::warn_unknown_warning_option :
+                             diag::warn_unknown_negative_warning_option)
+      << (Prefix.str() += Opt);
+}
+
+void clang::ProcessWarningOptions(DiagnosticsEngine &Diags,
                                   const DiagnosticOptions &Opts) {
   Diags.setSuppressSystemWarnings(true);  // Default to -Wno-system-headers
   Diags.setIgnoreAllWarnings(Opts.IgnoreWarnings);
   Diags.setShowOverloads(
-    static_cast<Diagnostic::OverloadsShown>(Opts.ShowOverloads));
-  
+    static_cast<DiagnosticsEngine::OverloadsShown>(Opts.ShowOverloads));
+
+  Diags.setElideType(Opts.ElideType);
+  Diags.setPrintTemplateTree(Opts.ShowTemplateTree);
+  Diags.setShowColors(Opts.ShowColors);
+ 
   // Handle -ferror-limit
   if (Opts.ErrorLimit)
     Diags.setErrorLimit(Opts.ErrorLimit);
   if (Opts.TemplateBacktraceLimit)
     Diags.setTemplateBacktraceLimit(Opts.TemplateBacktraceLimit);
+  if (Opts.ConstexprBacktraceLimit)
+    Diags.setConstexprBacktraceLimit(Opts.ConstexprBacktraceLimit);
 
   // If -pedantic or -pedantic-errors was specified, then we want to map all
   // extension diagnostics onto WARNING or ERROR unless the user has futz'd
   // around with them explicitly.
   if (Opts.PedanticErrors)
-    Diags.setExtensionHandlingBehavior(Diagnostic::Ext_Error);
+    Diags.setExtensionHandlingBehavior(DiagnosticsEngine::Ext_Error);
   else if (Opts.Pedantic)
-    Diags.setExtensionHandlingBehavior(Diagnostic::Ext_Warn);
+    Diags.setExtensionHandlingBehavior(DiagnosticsEngine::Ext_Warn);
   else
-    Diags.setExtensionHandlingBehavior(Diagnostic::Ext_Ignore);
+    Diags.setExtensionHandlingBehavior(DiagnosticsEngine::Ext_Ignore);
 
-  for (unsigned i = 0, e = Opts.Warnings.size(); i != e; ++i) {
-    const std::string &Opt = Opts.Warnings[i];
-    const char *OptStart = &Opt[0];
-    const char *OptEnd = OptStart+Opt.size();
-    assert(*OptEnd == 0 && "Expect null termination for lower-bound search");
+  llvm::SmallVector<diag::kind, 10> _Diags;
+  const IntrusiveRefCntPtr< DiagnosticIDs > DiagIDs =
+    Diags.getDiagnosticIDs();
+  // We parse the warning options twice.  The first pass sets diagnostic state,
+  // while the second pass reports warnings/errors.  This has the effect that
+  // we follow the more canonical "last option wins" paradigm when there are 
+  // conflicting options.
+  for (unsigned Report = 0, ReportEnd = 2; Report != ReportEnd; ++Report) {
+    bool SetDiagnostic = (Report == 0);
+    for (unsigned i = 0, e = Opts.Warnings.size(); i != e; ++i) {
+      StringRef Opt = Opts.Warnings[i];
+      StringRef OrigOpt = Opts.Warnings[i];
 
-    // Check to see if this warning starts with "no-", if so, this is a negative
-    // form of the option.
-    bool isPositive = true;
-    if (OptEnd-OptStart > 3 && memcmp(OptStart, "no-", 3) == 0) {
-      isPositive = false;
-      OptStart += 3;
-    }
+      // Treat -Wformat=0 as an alias for -Wno-format.
+      if (Opt == "format=0")
+        Opt = "no-format";
 
-    // Figure out how this option affects the warning.  If -Wfoo, map the
-    // diagnostic to a warning, if -Wno-foo, map it to ignore.
-    diag::Mapping Mapping = isPositive ? diag::MAP_WARNING : diag::MAP_IGNORE;
-
-    // -Wsystem-headers is a special case, not driven by the option table.  It
-    // cannot be controlled with -Werror.
-    if (OptEnd-OptStart == 14 && memcmp(OptStart, "system-headers", 14) == 0) {
-      Diags.setSuppressSystemWarnings(!isPositive);
-      continue;
-    }
-
-    // -Werror/-Wno-error is a special case, not controlled by the option table.
-    // It also has the "specifier" form of -Werror=foo and -Werror-foo.
-    if (OptEnd-OptStart >= 5 && memcmp(OptStart, "error", 5) == 0) {
-      const char *Specifier = 0;
-      if (OptEnd-OptStart != 5) {  // Specifier must be present.
-        if ((OptStart[5] != '=' && OptStart[5] != '-') ||
-            OptEnd-OptStart == 6) {
-          Diags.Report(diag::warn_unknown_warning_specifier)
-            << "-Werror" << ("-W" + Opt);
-          continue;
-        }
-        Specifier = OptStart+6;
+      // Check to see if this warning starts with "no-", if so, this is a
+      // negative form of the option.
+      bool isPositive = true;
+      if (Opt.startswith("no-")) {
+        isPositive = false;
+        Opt = Opt.substr(3);
       }
 
-      if (Specifier == 0) {
-        Diags.setWarningsAsErrors(isPositive);
+      // Figure out how this option affects the warning.  If -Wfoo, map the
+      // diagnostic to a warning, if -Wno-foo, map it to ignore.
+      diag::Mapping Mapping = isPositive ? diag::MAP_WARNING : diag::MAP_IGNORE;
+      
+      // -Wsystem-headers is a special case, not driven by the option table.  It
+      // cannot be controlled with -Werror.
+      if (Opt == "system-headers") {
+        if (SetDiagnostic)
+          Diags.setSuppressSystemWarnings(!isPositive);
         continue;
       }
-
-      // -Werror=foo maps foo to Error, -Wno-error=foo maps it to Warning.
-      Mapping = isPositive ? diag::MAP_ERROR : diag::MAP_WARNING_NO_WERROR;
-      OptStart = Specifier;
-    }
-
-    // -Wfatal-errors is yet another special case.
-    if (OptEnd-OptStart >= 12 && memcmp(OptStart, "fatal-errors", 12) == 0) {
-      const char* Specifier = 0;
-      if (OptEnd-OptStart != 12) {
-        if ((OptStart[12] != '=' && OptStart[12] != '-') ||
-            OptEnd-OptStart == 13) {
-          Diags.Report(diag::warn_unknown_warning_specifier)
-            << "-Wfatal-errors" << ("-W" + Opt);
-          continue;
+      
+      // -Weverything is a special case as well.  It implicitly enables all
+      // warnings, including ones not explicitly in a warning group.
+      if (Opt == "everything") {
+        if (SetDiagnostic) {
+          if (isPositive) {
+            Diags.setEnableAllWarnings(true);
+          } else {
+            Diags.setEnableAllWarnings(false);
+            Diags.setMappingToAllDiagnostics(diag::MAP_IGNORE);
+          }
         }
-        Specifier = OptStart + 13;
-      }
-
-      if (Specifier == 0) {
-        Diags.setErrorsAsFatal(isPositive);
         continue;
       }
+      
+      // -Werror/-Wno-error is a special case, not controlled by the option 
+      // table. It also has the "specifier" form of -Werror=foo and -Werror-foo.
+      if (Opt.startswith("error")) {
+        StringRef Specifier;
+        if (Opt.size() > 5) {  // Specifier must be present.
+          if ((Opt[5] != '=' && Opt[5] != '-') || Opt.size() == 6) {
+            if (Report)
+              Diags.Report(diag::warn_unknown_warning_specifier)
+                << "-Werror" << ("-W" + OrigOpt.str());
+            continue;
+          }
+          Specifier = Opt.substr(6);
+        }
+        
+        if (Specifier.empty()) {
+          if (SetDiagnostic)
+            Diags.setWarningsAsErrors(isPositive);
+          continue;
+        }
+        
+        if (SetDiagnostic) {
+          // Set the warning as error flag for this specifier.
+          Diags.setDiagnosticGroupWarningAsError(Specifier, isPositive);
+        } else if (DiagIDs->getDiagnosticsInGroup(Specifier, _Diags)) {
+          EmitUnknownDiagWarning(Diags, "-Werror=", Specifier, isPositive);
+        }
+        continue;
+      }
+      
+      // -Wfatal-errors is yet another special case.
+      if (Opt.startswith("fatal-errors")) {
+        StringRef Specifier;
+        if (Opt.size() != 12) {
+          if ((Opt[12] != '=' && Opt[12] != '-') || Opt.size() == 13) {
+            if (Report)
+              Diags.Report(diag::warn_unknown_warning_specifier)
+                << "-Wfatal-errors" << ("-W" + OrigOpt.str());
+            continue;
+          }
+          Specifier = Opt.substr(13);
+        }
 
-      // -Wfatal-errors=foo maps foo to Fatal, -Wno-fatal-errors=foo
-      // maps it to Error.
-      Mapping = isPositive ? diag::MAP_FATAL : diag::MAP_ERROR_NO_WFATAL;
-      OptStart = Specifier;
+        if (Specifier.empty()) {
+          if (SetDiagnostic)
+            Diags.setErrorsAsFatal(isPositive);
+          continue;
+        }
+        
+        if (SetDiagnostic) {
+          // Set the error as fatal flag for this specifier.
+          Diags.setDiagnosticGroupErrorAsFatal(Specifier, isPositive);
+        } else if (DiagIDs->getDiagnosticsInGroup(Specifier, _Diags)) {
+          EmitUnknownDiagWarning(Diags, "-Wfatal-errors=", Specifier,
+                                 isPositive);
+        }
+        continue;
+      }
+      
+      if (Report) {
+        if (DiagIDs->getDiagnosticsInGroup(Opt, _Diags))
+          EmitUnknownDiagWarning(Diags, isPositive ? "-W" : "-Wno-", Opt,
+                                 isPositive);
+      } else {
+        Diags.setDiagnosticGroupMapping(Opt, Mapping);
+      }
     }
-
-    if (Diags.setDiagnosticGroupMapping(OptStart, Mapping))
-      Diags.Report(diag::warn_unknown_warning_option) << ("-W" + Opt);
   }
 }

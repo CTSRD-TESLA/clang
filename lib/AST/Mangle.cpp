@@ -37,10 +37,14 @@ using namespace clang;
 namespace {
 
 static void mangleFunctionBlock(MangleContext &Context,
-                                llvm::StringRef Outer,
+                                StringRef Outer,
                                 const BlockDecl *BD,
-                                llvm::raw_ostream &Out) {
-  Out << "__" << Outer << "_block_invoke_" << Context.getBlockId(BD, true);
+                                raw_ostream &Out) {
+  unsigned discriminator = Context.getBlockId(BD, true);
+  if (discriminator == 0)
+    Out << "__" << Outer << "_block_invoke";
+  else
+    Out << "__" << Outer << "_block_invoke_" << discriminator+1; 
 }
 
 static void checkMangleDC(const DeclContext *DC, const BlockDecl *BD) {
@@ -48,22 +52,41 @@ static void checkMangleDC(const DeclContext *DC, const BlockDecl *BD) {
   const DeclContext *ExpectedDC = BD->getDeclContext();
   while (isa<BlockDecl>(ExpectedDC) || isa<EnumDecl>(ExpectedDC))
     ExpectedDC = ExpectedDC->getParent();
+  // In-class initializers for non-static data members are lexically defined
+  // within the class, but are mangled as if they were specified as constructor
+  // member initializers.
+  if (isa<CXXRecordDecl>(ExpectedDC) && DC != ExpectedDC)
+    DC = DC->getParent();
   assert(DC == ExpectedDC && "Given decl context did not match expected!");
 #endif
 }
 
 }
 
+void MangleContext::anchor() { }
+
 void MangleContext::mangleGlobalBlock(const BlockDecl *BD,
-                                      llvm::raw_ostream &Out) {
-  Out << "__block_global_" << getBlockId(BD, false);
+                                      const NamedDecl *ID,
+                                      raw_ostream &Out) {
+  unsigned discriminator = getBlockId(BD, false);
+  if (ID) {
+    if (shouldMangleDeclName(ID))
+      mangleName(ID, Out);
+    else {
+      Out << ID->getIdentifier()->getName();
+    }
+  }
+  if (discriminator == 0)
+    Out << "_block_invoke";
+  else
+    Out << "_block_invoke_" << discriminator+1;
 }
 
 void MangleContext::mangleCtorBlock(const CXXConstructorDecl *CD,
                                     CXXCtorType CT, const BlockDecl *BD,
-                                    llvm::raw_ostream &ResStream) {
+                                    raw_ostream &ResStream) {
   checkMangleDC(CD, BD);
-  llvm::SmallString<64> Buffer;
+  SmallString<64> Buffer;
   llvm::raw_svector_ostream Out(Buffer);
   mangleCXXCtor(CD, CT, Out);
   Out.flush();
@@ -72,9 +95,9 @@ void MangleContext::mangleCtorBlock(const CXXConstructorDecl *CD,
 
 void MangleContext::mangleDtorBlock(const CXXDestructorDecl *DD,
                                     CXXDtorType DT, const BlockDecl *BD,
-                                    llvm::raw_ostream &ResStream) {
+                                    raw_ostream &ResStream) {
   checkMangleDC(DD, BD);
-  llvm::SmallString<64> Buffer;
+  SmallString<64> Buffer;
   llvm::raw_svector_ostream Out(Buffer);
   mangleCXXDtor(DD, DT, Out);
   Out.flush();
@@ -82,18 +105,18 @@ void MangleContext::mangleDtorBlock(const CXXDestructorDecl *DD,
 }
 
 void MangleContext::mangleBlock(const DeclContext *DC, const BlockDecl *BD,
-                                llvm::raw_ostream &Out) {
+                                raw_ostream &Out) {
   assert(!isa<CXXConstructorDecl>(DC) && !isa<CXXDestructorDecl>(DC));
   checkMangleDC(DC, BD);
 
-  llvm::SmallString<64> Buffer;
+  SmallString<64> Buffer;
   llvm::raw_svector_ostream Stream(Buffer);
   if (const ObjCMethodDecl *Method = dyn_cast<ObjCMethodDecl>(DC)) {
     mangleObjCMethodName(Method, Stream);
   } else {
     const NamedDecl *ND = cast<NamedDecl>(DC);
-    if (IdentifierInfo *II = ND->getIdentifier())
-      Stream << II->getName();
+    if (!shouldMangleDeclName(ND) && ND->getIdentifier())
+      Stream << ND->getIdentifier()->getName();
     else {
       // FIXME: We were doing a mangleUnqualifiedName() before, but that's
       // a private member of a class that will soon itself be private to the
@@ -108,8 +131,8 @@ void MangleContext::mangleBlock(const DeclContext *DC, const BlockDecl *BD,
 }
 
 void MangleContext::mangleObjCMethodName(const ObjCMethodDecl *MD,
-                                         llvm::raw_ostream &Out) {
-  llvm::SmallString<64> Name;
+                                         raw_ostream &Out) {
+  SmallString<64> Name;
   llvm::raw_svector_ostream OS(Name);
   
   const ObjCContainerDecl *CD =
@@ -117,19 +140,20 @@ void MangleContext::mangleObjCMethodName(const ObjCMethodDecl *MD,
   assert (CD && "Missing container decl in GetNameForMethod");
   OS << (MD->isInstanceMethod() ? '-' : '+') << '[' << CD->getName();
   if (const ObjCCategoryImplDecl *CID = dyn_cast<ObjCCategoryImplDecl>(CD))
-    OS << '(' << CID << ')';
+    OS << '(' << *CID << ')';
   OS << ' ' << MD->getSelector().getAsString() << ']';
   
   Out << OS.str().size() << OS.str();
 }
 
 void MangleContext::mangleBlock(const BlockDecl *BD,
-                                llvm::raw_ostream &Out) {
+                                raw_ostream &Out,
+                                const NamedDecl *ID) {
   const DeclContext *DC = BD->getDeclContext();
   while (isa<BlockDecl>(DC) || isa<EnumDecl>(DC))
     DC = DC->getParent();
   if (DC->isFunctionOrMethod())
     mangleBlock(DC, BD, Out);
   else
-    mangleGlobalBlock(BD, Out);
+    mangleGlobalBlock(BD, ID, Out);
 }

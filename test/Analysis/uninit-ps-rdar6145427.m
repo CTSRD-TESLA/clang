@@ -1,4 +1,3 @@
-// RUN: %clang_cc1 -analyze -analyzer-checker=core -verify -analyzer-store=basic %s
 // RUN: %clang_cc1 -analyze -analyzer-checker=core -verify -analyzer-store=region %s
 
 // Delta-Debugging reduced preamble.
@@ -11,7 +10,10 @@ typedef struct _NSZone NSZone;
 @protocol NSObject  - (BOOL)isEqual:(id)object; @end
 @protocol NSCopying  - (id)copyWithZone:(NSZone *)zone; @end
 @protocol NSCoding  - (void)encodeWithCoder:(NSCoder *)aCoder; @end
-@interface NSObject <NSObject> {} + (id)alloc; @end
+@interface NSObject <NSObject> {} 
++ (id)alloc; 
+- (id)init;
+@end
 extern id NSAllocateObject(Class aClass, NSUInteger extraBytes, NSZone *zone);
 @interface NSValue : NSObject <NSCopying, NSCoding>  - (void)getValue:(void *)value; @end
 @class NSString, NSData;

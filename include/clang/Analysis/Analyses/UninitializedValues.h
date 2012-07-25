@@ -1,4 +1,4 @@
-//===- UninitializedValues.h - unintialized values analysis ----*- C++ --*-===//
+//= UninitializedValues.h - Finding uses of uninitialized values -*- C++ -*-==//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,71 +7,101 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file provides the interface for the Unintialized Values analysis,
-// a flow-sensitive analysis that detects when variable values are unintialized.
+// This file defines APIs for invoking and reported uninitialized values
+// warnings.
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_CLANG_UNITVALS_H
-#define LLVM_CLANG_UNITVALS_H
+#ifndef LLVM_CLANG_UNINIT_VALS_H
+#define LLVM_CLANG_UNINIT_VALS_H
 
-#include "clang/Analysis/Support/BlkExprDeclBitVector.h"
-#include "clang/Analysis/FlowSensitive/DataflowValues.h"
+#include "llvm/ADT/SmallVector.h"
 
 namespace clang {
 
-  class BlockVarDecl;
-  class Expr;
-  class DeclRefExpr;
-  class VarDecl;
+class AnalysisDeclContext;
+class CFG;
+class DeclContext;
+class Expr;
+class VarDecl;
 
-/// UninitializedValues_ValueTypes - Utility class to wrap type declarations
-///   for dataflow values and dataflow analysis state for the
-///   Unitialized Values analysis.
-class UninitializedValues_ValueTypes {
+/// A use of a variable, which might be uninitialized.
+class UninitUse {
 public:
-
-  struct ObserverTy;
-
-  struct AnalysisDataTy : public StmtDeclBitVector_Types::AnalysisDataTy {
-    AnalysisDataTy() : Observer(NULL), FullUninitTaint(true) {}
-    virtual ~AnalysisDataTy() {}
-
-    ObserverTy* Observer;
-    bool FullUninitTaint;
+  struct Branch {
+    const Stmt *Terminator;
+    unsigned Output;
   };
 
-  typedef StmtDeclBitVector_Types::ValTy ValTy;
+private:
+  /// The expression which uses this variable.
+  const Expr *User;
 
-  //===--------------------------------------------------------------------===//
-  // ObserverTy - Observer for querying DeclRefExprs that use an uninitalized
-  //   value.
-  //===--------------------------------------------------------------------===//
+  /// Does this use always see an uninitialized value?
+  bool AlwaysUninit;
 
-  struct ObserverTy {
-    virtual ~ObserverTy();
-    virtual void ObserveDeclRefExpr(ValTy& Val, AnalysisDataTy& AD,
-                                    DeclRefExpr* DR, VarDecl* VD) = 0;
-  };
-};
+  /// This use is always uninitialized if it occurs after any of these branches
+  /// is taken.
+  llvm::SmallVector<Branch, 2> UninitBranches;
 
-/// UninitializedValues - Objects of this class encapsulate dataflow analysis
-///  information regarding what variable declarations in a function are
-///  potentially unintialized.
-class UninitializedValues :
-  public DataflowValues<UninitializedValues_ValueTypes> {
 public:
-  typedef UninitializedValues_ValueTypes::ObserverTy ObserverTy;
+  UninitUse(const Expr *User, bool AlwaysUninit) :
+    User(User), AlwaysUninit(AlwaysUninit) {}
 
-  UninitializedValues(CFG &cfg) { getAnalysisData().setCFG(cfg); }
+  void addUninitBranch(Branch B) {
+    UninitBranches.push_back(B);
+  }
 
-  /// IntializeValues - Create initial dataflow values and meta data for
-  ///  a given CFG.  This is intended to be called by the dataflow solver.
-  void InitializeValues(const CFG& cfg);
+  /// Get the expression containing the uninitialized use.
+  const Expr *getUser() const { return User; }
+
+  /// The kind of uninitialized use.
+  enum Kind {
+    /// The use might be uninitialized.
+    Maybe,
+    /// The use is uninitialized whenever a certain branch is taken.
+    Sometimes,
+    /// The use is always uninitialized.
+    Always
+  };
+
+  /// Get the kind of uninitialized use.
+  Kind getKind() const {
+    return AlwaysUninit ? Always :
+           !branch_empty() ? Sometimes : Maybe;
+  }
+
+  typedef llvm::SmallVectorImpl<Branch>::const_iterator branch_iterator;
+  /// Branches which inevitably result in the variable being used uninitialized.
+  branch_iterator branch_begin() const { return UninitBranches.begin(); }
+  branch_iterator branch_end() const { return UninitBranches.end(); }
+  bool branch_empty() const { return UninitBranches.empty(); }
 };
 
+class UninitVariablesHandler {
+public:
+  UninitVariablesHandler() {}
+  virtual ~UninitVariablesHandler();
 
-void CheckUninitializedValues(CFG& cfg, ASTContext& Ctx, Diagnostic& Diags,
-                              bool FullUninitTaint=false);
-} // end namespace clang
+  /// Called when the uninitialized variable is used at the given expression.
+  virtual void handleUseOfUninitVariable(const VarDecl *vd,
+                                         const UninitUse &use) {}
+
+  /// Called when the uninitialized variable analysis detects the
+  /// idiom 'int x = x'.  All other uses of 'x' within the initializer
+  /// are handled by handleUseOfUninitVariable.
+  virtual void handleSelfInit(const VarDecl *vd) {}
+};
+
+struct UninitVariablesAnalysisStats {
+  unsigned NumVariablesAnalyzed;
+  unsigned NumBlockVisits;
+};
+
+void runUninitializedVariablesAnalysis(const DeclContext &dc, const CFG &cfg,
+                                       AnalysisDeclContext &ac,
+                                       UninitVariablesHandler &handler,
+                                       UninitVariablesAnalysisStats &stats);
+
+}
 #endif

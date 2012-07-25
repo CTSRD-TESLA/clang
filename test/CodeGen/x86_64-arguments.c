@@ -1,7 +1,6 @@
 // RUN: %clang_cc1 -triple x86_64-unknown-unknown -emit-llvm -o - %s| FileCheck %s
+// RUN: %clang_cc1 -triple x86_64-unknown-unknown -emit-llvm -o - %s -target-feature +avx | FileCheck %s -check-prefix=AVX
 #include <stdarg.h>
-
-// CHECK: %0 = type { i64, double }
 
 // CHECK: define signext i8 @f0()
 char f0(void) {
@@ -44,8 +43,8 @@ void f7(e7 a0) {
 
 // Test merging/passing of upper eightbyte with X87 class.
 //
-// CHECK: define %0 @f8_1()
-// CHECK: define void @f8_2(i64 %a0.coerce0, double %a0.coerce1)
+// CHECK: define void @f8_1(%union.u8* noalias sret %agg.result)
+// CHECK: define void @f8_2(%union.u8* byval align 16 %a0)
 union u8 {
   long double a;
   int b;
@@ -60,7 +59,7 @@ struct s9 { int a; int b; int : 0; } f9(void) { while (1) {} }
 struct s10 { int a; int b; int : 0; };
 void f10(struct s10 a0) {}
 
-// CHECK: define void @f11(%struct.s19* sret %agg.result)
+// CHECK: define void @f11(%union.anon* noalias sret %agg.result)
 union { long double a; float b; } f11() { while (1) {} }
 
 // CHECK: define i32 @f12_0()
@@ -71,7 +70,7 @@ void f12_1(struct s12 a0) {}
 
 // Check that sret parameter is accounted for when checking available integer
 // registers.
-// CHECK: define void @f13(%struct.s13_0* sret %agg.result, i32 %a, i32 %b, i32 %c, i32 %d, {{.*}}* byval %e, i32 %f)
+// CHECK: define void @f13(%struct.s13_0* noalias sret %agg.result, i32 %a, i32 %b, i32 %c, i32 %d, {{.*}}* byval align 8 %e, i32 %f)
 
 struct s13_0 { long long f0[3]; };
 struct s13_1 { long long f0[2]; };
@@ -149,7 +148,7 @@ struct f24s { long a; int b; };
 struct f23S f24(struct f23S *X, struct f24s *P2) {
   return *X;
   
-  // CHECK: define %struct.f24s @f24(%struct.f23S* %X, %struct.f24s* %P2)
+  // CHECK: define { i64, i32 } @f24(%struct.f23S* %X, %struct.f24s* %P2)
 }
 
 // rdar://8248065
@@ -171,7 +170,7 @@ struct foo26 {
 };
 
 struct foo26 f26(struct foo26 *P) {
-  // CHECK: define %struct.foo26 @f26(%struct.foo26* %P)
+  // CHECK: define { i32*, float* } @f26(%struct.foo26* %P)
   return *P;
 }
 
@@ -245,3 +244,113 @@ v1i64 f34(v1i64 arg) { return arg; }
 typedef unsigned long v1i64_2 __attribute__((__vector_size__(8)));
 v1i64_2 f35(v1i64_2 arg) { return arg+arg; }
 
+// rdar://9122143
+// CHECK: declare void @func(%struct._str* byval align 16)
+typedef struct _str {
+  union {
+    long double a;
+    long c;
+  };
+} str;
+
+void func(str s);
+str ss;
+void f9122143()
+{
+  func(ss);
+}
+
+// CHECK: define double @f36(double %arg.coerce)
+typedef unsigned v2i32 __attribute((__vector_size__(8)));
+v2i32 f36(v2i32 arg) { return arg; }
+
+// AVX: declare void @f38(<8 x float>)
+// AVX: declare void @f37(<8 x float>)
+// CHECK: declare void @f38(%struct.s256* byval align 32)
+// CHECK: declare void @f37(<8 x float>* byval align 32)
+typedef float __m256 __attribute__ ((__vector_size__ (32)));
+typedef struct {
+  __m256 m;
+} s256;
+
+s256 x38;
+__m256 x37;
+
+void f38(s256 x);
+void f37(__m256 x);
+void f39() { f38(x38); f37(x37); }
+
+// The two next tests make sure that the struct below is passed
+// in the same way regardless of avx being used
+
+// CHECK: declare void @func40(%struct.t128* byval align 16)
+typedef float __m128 __attribute__ ((__vector_size__ (16)));
+typedef struct t128 {
+  __m128 m;
+  __m128 n;
+} two128;
+
+extern void func40(two128 s);
+void func41(two128 s) {
+  func40(s);
+}
+
+// CHECK: declare void @func42(%struct.t128_2* byval align 16)
+typedef struct xxx {
+  __m128 array[2];
+} Atwo128;
+typedef struct t128_2 {
+  Atwo128 x;
+} SA;
+
+extern void func42(SA s);
+void func43(SA s) {
+  func42(s);
+}
+
+// CHECK: define i32 @f44
+// CHECK: ptrtoint
+// CHECK-NEXT: and {{.*}}, -32
+// CHECK-NEXT: inttoptr
+typedef int T44 __attribute((vector_size(32)));
+struct s44 { T44 x; int y; };
+int f44(int i, ...) {
+  __builtin_va_list ap;
+  __builtin_va_start(ap, i);
+  struct s44 s = __builtin_va_arg(ap, struct s44);
+  __builtin_va_end(ap);
+  return s.y;
+}
+
+// Text that vec3 returns the correct LLVM IR type.
+// AVX: define i32 @foo(<3 x i64> %X)
+typedef long long3 __attribute((ext_vector_type(3)));
+int foo(long3 X)
+{
+  return 0;
+}
+
+// Make sure we don't use a varargs convention for a function without a
+// prototype where AVX types are involved.
+// AVX: @test45
+// AVX: call i32 bitcast (i32 (...)* @f45 to i32 (<8 x float>)*)
+int f45();
+__m256 x45;
+void test45() { f45(x45); }
+
+// Make sure we use byval to pass 64-bit vectors in memory; the LLVM call
+// lowering can't handle this case correctly because it runs after legalization.
+// CHECK: @test46
+// CHECK: call void @f46({{.*}}<2 x float>* byval align 8 {{.*}}, <2 x float>* byval align 8 {{.*}})
+typedef float v46 __attribute((vector_size(8)));
+void f46(v46,v46,v46,v46,v46,v46,v46,v46,v46,v46);
+void test46() { v46 x = {1,2}; f46(x,x,x,x,x,x,x,x,x,x); }
+
+// Check that we pass the struct below without using byval, which helps out
+// codegen.
+//
+// CHECK: @test47
+// CHECK: call void @f47(i32 {{.*}}, i32 {{.*}}, i32 {{.*}}, i32 {{.*}}, i32 {{.*}}, i32 {{.*}}, i32 {{.*}})
+struct s47 { unsigned a; };
+void f47(int,int,int,int,int,int,struct s47);
+void test47(int a, struct s47 b) { f47(a, a, a, a, a, a, b); }

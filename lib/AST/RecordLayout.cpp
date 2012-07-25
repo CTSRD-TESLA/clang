@@ -13,6 +13,7 @@
 
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/RecordLayout.h"
+#include "clang/Basic/TargetInfo.h"
 
 using namespace clang;
 
@@ -31,7 +32,7 @@ ASTRecordLayout::ASTRecordLayout(const ASTContext &Ctx, CharUnits size,
                                  CharUnits alignment, CharUnits datasize,
                                  const uint64_t *fieldoffsets,
                                  unsigned fieldcount)
-  : Size(size), DataSize(datasize), FieldOffsets(0), Alignment(alignment),
+  : Size(size), DataSize(datasize), Alignment(alignment), FieldOffsets(0),
     FieldCount(fieldcount), CXXInfo(0) {
   if (FieldCount > 0)  {
     FieldOffsets = new (Ctx) uint64_t[FieldCount];
@@ -42,6 +43,7 @@ ASTRecordLayout::ASTRecordLayout(const ASTContext &Ctx, CharUnits size,
 // Constructor for C++ records.
 ASTRecordLayout::ASTRecordLayout(const ASTContext &Ctx,
                                  CharUnits size, CharUnits alignment,
+                                 bool hasOwnVFPtr, CharUnits vbptroffset,
                                  CharUnits datasize,
                                  const uint64_t *fieldoffsets,
                                  unsigned fieldcount,
@@ -51,8 +53,8 @@ ASTRecordLayout::ASTRecordLayout(const ASTContext &Ctx,
                                  const CXXRecordDecl *PrimaryBase,
                                  bool IsPrimaryBaseVirtual,
                                  const BaseOffsetsMapTy& BaseOffsets,
-                                 const BaseOffsetsMapTy& VBaseOffsets)
-  : Size(size), DataSize(datasize), FieldOffsets(0), Alignment(alignment),
+                                 const VBaseOffsetsMapTy& VBaseOffsets)
+  : Size(size), DataSize(datasize), Alignment(alignment), FieldOffsets(0),
     FieldCount(fieldcount), CXXInfo(new (Ctx) CXXRecordLayoutInfo)
 {
   if (FieldCount > 0)  {
@@ -67,15 +69,21 @@ ASTRecordLayout::ASTRecordLayout(const ASTContext &Ctx,
   CXXInfo->SizeOfLargestEmptySubobject = SizeOfLargestEmptySubobject;
   CXXInfo->BaseOffsets = BaseOffsets;
   CXXInfo->VBaseOffsets = VBaseOffsets;
+  CXXInfo->HasOwnVFPtr = hasOwnVFPtr;
+  CXXInfo->VBPtrOffset = vbptroffset;
 
 #ifndef NDEBUG
     if (const CXXRecordDecl *PrimaryBase = getPrimaryBase()) {
-      if (isPrimaryBaseVirtual())
+      if (isPrimaryBaseVirtual()) {
+        // Microsoft ABI doesn't have primary virtual base
+        if (Ctx.getTargetInfo().getCXXABI() != CXXABI_Microsoft) {
         assert(getVBaseClassOffset(PrimaryBase).isZero() &&
                "Primary virtual base must be at offset 0!");
-      else
-        assert(getBaseClassOffsetInBits(PrimaryBase) == 0 &&
+        }
+      } else {
+        assert(getBaseClassOffset(PrimaryBase).isZero() &&
                "Primary base must be at offset 0!");
+      }
     }
 #endif        
 }

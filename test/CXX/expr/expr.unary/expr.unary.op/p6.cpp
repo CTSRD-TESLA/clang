@@ -4,7 +4,7 @@
 
 bool b = !0;
 
-bool b2 = !1.2;
+bool b2 = !1.2; //expected-warning{{implicit conversion from 'double' to 'bool' changes value from 1.2 to true}}
 
 bool b3 = !4;
 
@@ -29,8 +29,7 @@ bool b8 = !S(); //expected-error {{invalid argument type 'S'}}
 
 namespace PR8181
 {
-  void f() { }
-  void f(char) { }
-  bool b = !&f;  //expected-error {{cannot resolve overloaded function from context}}
-
+  bool f() { } // expected-note{{possible target for call}}
+  void f(char) { } // expected-note{{possible target for call}}
+  bool b = !&f;  //expected-error {{reference to overloaded function could not be resolved; did you mean to call it with no arguments?}}
 }

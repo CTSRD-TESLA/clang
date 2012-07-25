@@ -16,7 +16,7 @@ static void f (char * (*g) (char **, int), char **p, ...) {
 
 
 // PR3172
-} // expected-error {{expected external declaration}}
+} // expected-error {{extraneous closing brace ('}')}}
 
 
 // rdar://6094870
@@ -37,8 +37,9 @@ void test(int a) {
     test(0);
   else
     ;
-  
-  if (x.i == 0))   // expected-error {{expected expression}}
+
+  // PR12595
+  if (x.i == 0))   // expected-error {{extraneous ')' after condition, expected a statement}}
     test(0);
   else
     ;
@@ -49,7 +50,7 @@ void test(int a) {
 char ((((                       /* expected-note {{to match this '('}} */
          *X x ] ))));                    /* expected-error {{expected ')'}} */
 
-;   // expected-warning {{ISO C does not allow an extra ';' outside of a function}}
+;   // expected-warning {{extra ';' outside of a function}}
 
 
 
@@ -74,6 +75,11 @@ void foo() {
   X = 4 // expected-error{{expected ';' after expression}}
 }
 
+// rdar://9045701
+void test9045701(int x) {
+#define VALUE 0
+  x = VALUE // expected-error{{expected ';' after expression}}
+}
 
 // rdar://7980651
 typedef int intptr_t;  // expected-note {{'intptr_t' declared here}}
@@ -83,4 +89,13 @@ void test1(void) {
   int x = 2: // expected-error {{expected ';' at end of declaration}}
   int y = x;
   int z = y;
+}
+
+void test2(int x) {
+#define VALUE2 VALUE+VALUE
+#define VALUE3 VALUE+0
+#define VALUE4(x) x+0
+  x = VALUE2 // expected-error{{expected ';' after expression}}
+  x = VALUE3 // expected-error{{expected ';' after expression}}
+  x = VALUE4(0) // expected-error{{expected ';' after expression}}
 }

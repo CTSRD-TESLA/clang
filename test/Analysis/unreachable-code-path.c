@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -analyze -analyzer-checker=core,DeadStores,core.experimental.UnreachableCode -verify -analyzer-opt-analyze-nested-blocks -Wno-unused-value %s
+// RUN: %clang_cc1 -analyze -analyzer-checker=core,deadcode.DeadStores,experimental.deadcode.UnreachableCode -verify -analyzer-opt-analyze-nested-blocks -Wno-unused-value %s
 
 extern void foo(int a);
 
@@ -121,4 +121,21 @@ void test10() {
   e:
   goto d;
   f: ;
+}
+
+// test11: we can actually end up in the default case, even if it is not
+// obvious: there might be something wrong with the given argument.
+enum foobar { FOO, BAR };
+extern void error();
+void test11(enum foobar fb) {
+  switch (fb) {
+    case FOO:
+      break;
+    case BAR:
+      break;
+    default:
+      error(); // no-warning
+      return;
+      error(); // expected-warning {{never executed}}
+  }
 }

@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -std=c++0x -fblocks -fsyntax-only -verify %s
+// RUN: %clang_cc1 -std=c++11 -fblocks -fsyntax-only -verify %s
 
 // Tests the use of blocks with variadic templates.
 template<typename ...Args>
@@ -37,3 +37,10 @@ int f3(Args ...args) {
 }
 
 template int f3(const char*, int, float, double);
+
+template<typename ...Args>
+int PR9953(Args ...args) {
+  return ^(Args *...block_args) {
+    return f1(block_args); // expected-error{{expression contains unexpanded parameter pack 'block_args'}}
+  }(&args...);
+}

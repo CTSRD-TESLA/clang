@@ -95,3 +95,44 @@ namespace PR9026 {
     Write(x);
   }
 }
+
+namespace PR10270 {
+  template<typename T> class C;
+  template<typename T> void f() {
+    if (C<T> == 1) // expected-error{{expected unqualified-id}} \
+                   // expected-error{{invalid '==' at end of declaration}}
+      return;
+  }
+}
+
+namespace rdar11806334 {
+
+class cc_YCbCr;
+
+class cc_rgb
+{
+ public:
+  cc_rgb( uint p ); // expected-error {{unknown type name}}
+  cc_rgb( cc_YCbCr v_in );
+};
+
+class cc_hsl
+{
+ public:
+  cc_rgb rgb();
+  cc_YCbCr YCbCr();
+};
+
+class cc_YCbCr
+{
+ public:
+  cc_YCbCr( const cc_rgb v_in );
+};
+
+cc_YCbCr cc_hsl::YCbCr()
+{
+ cc_YCbCr v_out = cc_YCbCr( rgb());
+ return v_out;
+}
+
+}

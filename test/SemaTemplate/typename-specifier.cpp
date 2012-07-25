@@ -71,3 +71,84 @@ struct C {
 ::Y<A>::type ip7 = &i;
 ::Y<B>::type ip8 = &i; // expected-note{{in instantiation of template class 'Y<B>' requested here}}
 ::Y<C>::type ip9 = &i; // expected-note{{in instantiation of template class 'Y<C>' requested here}}
+
+template<typename T> struct D {
+  typedef typename T::foo foo;  // expected-error {{type 'long' cannot be used prior to '::' because it has no members}}
+  typedef typename foo::bar bar;
+};
+
+D<long> struct_D;  // expected-note {{in instantiation of template class 'D<long>' requested here}}
+
+template<typename T> struct E {
+  typedef typename T::foo foo;
+  typedef typename foo::bar bar;  // expected-error {{type 'foo' (aka 'double') cannot be used prior to '::' because it has no members}}
+};
+
+struct F {
+  typedef double foo;
+};
+
+E<F> struct_E; // expected-note {{in instantiation of template class 'E<F>' requested here}}
+
+template<typename T> struct G {
+  typedef typename T::foo foo;
+  typedef typename foo::bar bar;
+};
+
+struct H {
+  struct foo {
+    typedef double bar;
+  };
+};
+
+G<H> struct_G;
+
+namespace PR10925 {
+  template< int mydim, typename Traits >
+  class BasicGeometry
+  {
+    typedef int some_type_t;
+  };
+
+  template<class ctype, int mydim, int coorddim>
+  class MockGeometry : BasicGeometry<mydim, int>{
+    using typename BasicGeometry<mydim, int>::operator[]; // expected-error {{typename is allowed for identifiers only}}
+  };
+}
+
+
+namespace missing_typename {
+template <class T1, class T2> struct pair {}; // expected-note 7 {{template parameter is declared here}}
+
+template <class T1, class T2>
+struct map {
+  typedef T1* iterator;
+};
+
+template <class T>
+class ExampleClass1 {
+  struct ExampleItem;
+
+
+  struct ExampleItemSet {
+    typedef ExampleItem* iterator;
+    ExampleItem* operator[](unsigned);
+  };
+
+  void foo() {
+    pair<ExampleItemSet::iterator, int> i; // expected-error {{template argument for template type parameter must be a type; did you forget 'typename'?}}
+    pair<this->ExampleItemSet::iterator, int> i; // expected-error-re {{template argument for template type parameter must be a type$}}
+    pair<ExampleItemSet::operator[], int> i; // expected-error-re {{template argument for template type parameter must be a type$}}
+  }
+  pair<ExampleItemSet::iterator, int> elt; // expected-error {{template argument for template type parameter must be a type; did you forget 'typename'?}}
+
+
+  typedef map<int, ExampleItem*> ExampleItemMap;
+
+  static void bar() {
+    pair<ExampleItemMap::iterator, int> i; // expected-error {{template argument for template type parameter must be a type; did you forget 'typename'?}}
+  }
+  pair<ExampleItemMap::iterator, int> entry; // expected-error {{template argument for template type parameter must be a type; did you forget 'typename'?}}
+  pair<bar, int> foobar; // expected-error {{template argument for template type parameter must be a type}}
+};
+} // namespace missing_typename

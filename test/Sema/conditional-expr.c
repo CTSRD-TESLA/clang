@@ -1,7 +1,7 @@
-// RUN: %clang_cc1 -fsyntax-only -verify -pedantic -Wsign-compare %s
+// RUN: %clang_cc1 -fsyntax-only -verify -pedantic -Wsign-conversion %s
 void foo() {
   *(0 ? (double *)0 : (void *)0) = 0;
-  // FIXME: GCC doesn't consider the the following two statements to be errors.
+  // FIXME: GCC doesn't consider the following two statements to be errors.
   *(0 ? (double *)0 : (void *)(int *)0) = 0; // expected-error {{incomplete type 'void' is not assignable}}
   *(0 ? (double *)0 : (void *)(double *)0) = 0; // expected-error {{incomplete type 'void' is not assignable}}
   *(0 ? (double *)0 : (int *)(void *)0) = 0; // expected-error {{incomplete type 'void' is not assignable}} expected-warning {{pointer type mismatch ('double *' and 'int *')}}
@@ -36,12 +36,12 @@ void foo() {
   *(0 ? (asdf) 0 : &x) = 10;
 
   unsigned long test0 = 5;
-  test0 = test0 ? (long) test0 : test0; // expected-warning {{operands of ? are integers of different signs}}
-  test0 = test0 ? (int) test0 : test0; // expected-warning {{operands of ? are integers of different signs}}
-  test0 = test0 ? (short) test0 : test0; // expected-warning {{operands of ? are integers of different signs}}
-  test0 = test0 ? test0 : (long) test0; // expected-warning {{operands of ? are integers of different signs}}
-  test0 = test0 ? test0 : (int) test0; // expected-warning {{operands of ? are integers of different signs}}
-  test0 = test0 ? test0 : (short) test0; // expected-warning {{operands of ? are integers of different signs}}
+  test0 = test0 ? (long) test0 : test0; // expected-warning {{operand of ? changes signedness: 'long' to 'unsigned long'}}
+  test0 = test0 ? (int) test0 : test0; // expected-warning {{operand of ? changes signedness: 'int' to 'unsigned long'}}
+  test0 = test0 ? (short) test0 : test0; // expected-warning {{operand of ? changes signedness: 'short' to 'unsigned long'}}
+  test0 = test0 ? test0 : (long) test0; // expected-warning {{operand of ? changes signedness: 'long' to 'unsigned long'}}
+  test0 = test0 ? test0 : (int) test0; // expected-warning {{operand of ? changes signedness: 'int' to 'unsigned long'}}
+  test0 = test0 ? test0 : (short) test0; // expected-warning {{operand of ? changes signedness: 'short' to 'unsigned long'}}
   test0 = test0 ? test0 : (long) 10;
   test0 = test0 ? test0 : (int) 10;
   test0 = test0 ? test0 : (short) 10;
@@ -49,12 +49,34 @@ void foo() {
   test0 = test0 ? (int) 10 : test0;
   test0 = test0 ? (short) 10 : test0;
 
+  int test1;
   enum Enum { EVal };
   test0 = test0 ? EVal : test0;
-  test0 = test0 ? EVal : (int) test0; // okay: EVal is an int
-  test0 = test0 ? // expected-warning {{operands of ? are integers of different signs}}
+  test1 = test0 ? EVal : (int) test0;
+  test0 = test0 ?
                   (unsigned) EVal
-                : (int) test0;
+                : (int) test0;  // expected-warning {{operand of ? changes signedness: 'int' to 'unsigned long'}}
+
+  test0 = test0 ? EVal : test1; // expected-warning {{operand of ? changes signedness: 'int' to 'unsigned long'}}
+  test0 = test0 ? test1 : EVal; // expected-warning {{operand of ? changes signedness: 'int' to 'unsigned long'}}
+
+  const int *const_int;
+  int *nonconst_int;
+  *(test0 ? const_int : nonconst_int) = 42; // expected-error {{read-only variable is not assignable}}
+  *(test0 ? nonconst_int : const_int) = 42; // expected-error {{read-only variable is not assignable}}
+
+  // The composite type here should be "int (*)[12]", fine for the sizeof
+  int (*incomplete)[];
+  int (*complete)[12];
+  sizeof(*(test0 ? incomplete : complete)); // expected-warning {{expression result unused}}
+  sizeof(*(test0 ? complete : incomplete)); // expected-warning {{expression result unused}}
+
+  int __attribute__((address_space(2))) *adr2;
+  int __attribute__((address_space(3))) *adr3;
+  test0 ? adr2 : adr3; // expected-warning {{pointer type mismatch}} expected-warning {{expression result unused}}
+
+  // Make sure address-space mask ends up in the result type
+  (test0 ? (test0 ? adr2 : adr2) : nonconst_int); // expected-warning {{pointer type mismatch}} expected-warning {{expression result unused}}
 }
 
 int Postgresql() {

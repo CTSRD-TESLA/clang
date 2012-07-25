@@ -2,7 +2,7 @@
 template<typename T, T Divisor>
 class X {
 public:
-  static const T value = 10 / Divisor; // expected-error{{in-class initializer is not a constant expression}}
+  static const T value = 10 / Divisor; // expected-error{{in-class initializer for static data member is not a constant expression}}
 };
 
 int array1[X<int, 2>::value == 5? 1 : -1];
@@ -11,7 +11,7 @@ X<int, 0> xi0; // expected-note{{in instantiation of template class 'X<int, 0>' 
 
 template<typename T>
 class Y {
-  static const T value = 0; // expected-warning{{in-class initializer for static data member of type 'const float' is a C++0x extension}}
+  static const T value = 0; // expected-warning{{in-class initializer for static data member of type 'const float' is a GNU extension}}
 };
 
 Y<float> fy; // expected-note{{in instantiation of template class 'Y<float>' requested here}}
@@ -114,4 +114,3 @@ namespace PR6449 {
   template class X1<char>;
 
 }
-

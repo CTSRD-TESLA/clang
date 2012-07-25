@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This provides C++ AST support targetting the Itanium C++ ABI, which is
+// This provides C++ AST support targeting the Itanium C++ ABI, which is
 // documented at:
 //  http://www.codesourcery.com/public/cxx-abi/abi.html
 //  http://www.codesourcery.com/public/cxx-abi/abi-eh.html
@@ -39,7 +39,7 @@ public:
     return 1;
   }
 
-  CallingConv getDefaultMethodCallConv() const {
+  CallingConv getDefaultMethodCallConv(bool isVariadic) const {
     return CC_C;
   }
 
@@ -53,7 +53,7 @@ public:
 
     const ASTRecordLayout &Layout = Context.getASTRecordLayout(RD);
     CharUnits PointerSize = 
-      Context.toCharUnitsFromBits(Context.Target.getPointerWidth(0));
+      Context.toCharUnitsFromBits(Context.getTargetInfo().getPointerWidth(0));
     return Layout.getNonVirtualSize() == PointerSize;
   }
 };

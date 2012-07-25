@@ -19,8 +19,12 @@ if( CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR )
     endif()
   endif()
 
-  if( NOT EXISTS "${CLANG_PATH_TO_LLVM_BUILD}/bin/tblgen${CMAKE_EXECUTABLE_SUFFIX}" )
-    message(FATAL_ERROR "Please set CLANG_PATH_TO_LLVM_BUILD to a directory containing a LLVM build.")
+  if( NOT EXISTS "${CLANG_PATH_TO_LLVM_BUILD}/bin/llvm-tblgen${CMAKE_EXECUTABLE_SUFFIX}" )
+    # Looking for bin/Debug/llvm-tblgen is a complete hack. How can we get
+    # around this?
+    if( NOT EXISTS "${CLANG_PATH_TO_LLVM_BUILD}/bin/Debug/llvm-tblgen${CMAKE_EXECUTABLE_SUFFIX}" )
+      message(FATAL_ERROR "Please set CLANG_PATH_TO_LLVM_BUILD to a directory containing a LLVM build.")
+    endif()
   endif()
 
   list(APPEND CMAKE_MODULE_PATH "${CLANG_PATH_TO_LLVM_BUILD}/share/llvm/cmake")
@@ -30,7 +34,7 @@ if( CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR )
 
   include(AddLLVM)
   include(TableGen)
-  include("${CLANG_PATH_TO_LLVM_BUILD}/share/llvm/cmake/LLVM.cmake")
+  include("${CLANG_PATH_TO_LLVM_BUILD}/share/llvm/cmake/LLVMConfig.cmake")
   include(HandleLLVMOptions)
 
   set(PACKAGE_VERSION "${LLVM_PACKAGE_VERSION}")
@@ -40,12 +44,22 @@ if( CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR )
 
   set(CMAKE_INCLUDE_CURRENT_DIR ON)
   include_directories("${PATH_TO_LLVM_BUILD}/include" "${LLVM_MAIN_INCLUDE_DIR}")
-  if( NOT PATH_TO_LLVM_BUILD STREQUAL LLVM_MAIN_SRC_DIR )
-    include_directories("${LLVM_MAIN_INCLUDE_DIR}")
-  endif()
   link_directories("${PATH_TO_LLVM_BUILD}/lib")
 
-  set(LLVM_TABLEGEN_EXE "${PATH_TO_LLVM_BUILD}/bin/tblgen")
+  if( EXISTS "${CLANG_PATH_TO_LLVM_BUILD}/bin/llvm-tblgen${CMAKE_EXECUTABLE_SUFFIX}" )
+    set(LLVM_TABLEGEN_EXE "${PATH_TO_LLVM_BUILD}/bin/llvm-tblgen${CMAKE_EXECUTABLE_SUFFIX}")
+  else()
+    # FIXME: This is an utter hack.
+    set(LLVM_TABLEGEN_EXE "${PATH_TO_LLVM_BUILD}/bin/Debug/llvm-tblgen${CMAKE_EXECUTABLE_SUFFIX}")
+  endif()
+
+  # Define the default arguments to use with 'lit', and an option for the user
+  # to override.
+  set(LIT_ARGS_DEFAULT "-sv")
+  if (MSVC OR XCODE)
+    set(LIT_ARGS_DEFAULT "${LIT_ARGS_DEFAULT} --no-progress-bar")
+  endif()
+  set(LLVM_LIT_ARGS "${LIT_ARGS_DEFAULT}" CACHE STRING "Default options for lit")
 
   set( CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin )
   set( CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib )
@@ -59,6 +73,17 @@ set(CLANG_RESOURCE_DIR "" CACHE STRING
 
 set(C_INCLUDE_DIRS "" CACHE STRING
   "Colon separated list of directories clang will search for headers.")
+
+set(GCC_INSTALL_PREFIX "" CACHE PATH "Directory where gcc is installed." )
+set(DEFAULT_SYSROOT "" CACHE PATH
+  "Default <path> to all compiler invocations for --sysroot=<path>." )
+
+set(CLANG_VENDOR "" CACHE STRING
+  "Vendor-specific text for showing with version information.")
+
+if( CLANG_VENDOR )
+  add_definitions( -DCLANG_VENDOR="${CLANG_VENDOR} " )
+endif()
 
 set(CLANG_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(CLANG_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
@@ -106,7 +131,7 @@ configure_file(
   ${CMAKE_CURRENT_BINARY_DIR}/include/clang/Basic/Version.inc)
 
 # Add appropriate flags for GCC
-if (CMAKE_COMPILER_IS_GNUCXX)
+if (LLVM_COMPILER_IS_GCC_COMPATIBLE)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-common -Woverloaded-virtual -Wcast-qual -fno-strict-aliasing -pedantic -Wno-long-long -Wall -W -Wno-unused-parameter -Wwrite-strings")
 endif ()
 
@@ -140,7 +165,7 @@ function(clang_tablegen)
   endif()
 
   set( LLVM_TARGET_DEFINITIONS ${CTG_SOURCE} )
-  tablegen( ${CTG_DEFAULT_ARGS} )
+  tablegen( CLANG ${CTG_DEFAULT_ARGS} )
 
   list( GET CTG_DEFAULT_ARGS 0 output_file )
   if( CTG_TARGET )
@@ -174,35 +199,15 @@ macro(add_clang_library name)
   if( LLVM_COMMON_DEPENDS )
     add_dependencies( ${name} ${LLVM_COMMON_DEPENDS} )
   endif( LLVM_COMMON_DEPENDS )
-  if( LLVM_USED_LIBS )
-    foreach(lib ${LLVM_USED_LIBS})
-      target_link_libraries( ${name} ${lib} )
-    endforeach(lib)
-  endif( LLVM_USED_LIBS )
-  if( LLVM_LINK_COMPONENTS )
-    llvm_config(${name} ${LLVM_LINK_COMPONENTS})
-  endif( LLVM_LINK_COMPONENTS )
-  if (LLVM_COMMON_LIBS)
-    target_link_libraries(${name} ${LLVM_COMMON_LIBS})
-  endif()
-  if( NOT MINGW )
-    get_system_libs(llvm_system_libs)
-    if( llvm_system_libs )
-      target_link_libraries(${name} ${llvm_system_libs})
-    endif()
-  endif()
-  add_dependencies(${name} ClangDiagnosticCommon)
-  if(MSVC)
-    get_target_property(cflag ${name} COMPILE_FLAGS)
-    if(NOT cflag)
-      set(cflag "")
-    endif(NOT cflag)
-    set(cflag "${cflag} /Za")
-    set_target_properties(${name} PROPERTIES COMPILE_FLAGS ${cflag})
-  endif(MSVC)
+
+  llvm_config( ${name} ${LLVM_LINK_COMPONENTS} )
+  target_link_libraries( ${name} ${LLVM_COMMON_LIBS} )
+  link_system_libs( ${name} )
+
   install(TARGETS ${name}
     LIBRARY DESTINATION lib${LLVM_LIBDIR_SUFFIX}
-    ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX})
+    ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX}
+    RUNTIME DESTINATION bin)
   set_target_properties(${name} PROPERTIES FOLDER "Clang libraries")
 endmacro(add_clang_library)
 
@@ -211,9 +216,9 @@ macro(add_clang_executable name)
   set_target_properties(${name} PROPERTIES FOLDER "Clang executables")
 endmacro(add_clang_executable)
 
-include_directories(
-  ${CMAKE_CURRENT_SOURCE_DIR}/include
+include_directories(BEFORE
   ${CMAKE_CURRENT_BINARY_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
 
 install(DIRECTORY include/
@@ -221,6 +226,7 @@ install(DIRECTORY include/
   FILES_MATCHING
   PATTERN "*.def"
   PATTERN "*.h"
+  PATTERN "config.h" EXCLUDE
   PATTERN ".svn" EXCLUDE
   )
 
@@ -231,7 +237,7 @@ install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/
   PATTERN "*.inc"
   )
 
-add_definitions( -D_GNU_SOURCE -DHAVE_CLANG_CONFIG_H )
+add_definitions( -D_GNU_SOURCE )
 
 # Clang version information
 set(CLANG_EXECUTABLE_VERSION
@@ -242,11 +248,10 @@ set(LIBCLANG_LIBRARY_VERSION
     "Version number that will be placed into the libclang library , in the form XX.YY")
 mark_as_advanced(CLANG_EXECUTABLE_VERSION LIBCLANG_LIBRARY_VERSION)
 
+add_subdirectory(utils/TableGen)
 
-option(CLANG_BUILD_EXAMPLES "Build CLANG example programs." OFF)
-if(CLANG_BUILD_EXAMPLES)
-  add_subdirectory(examples)
-endif ()
+option(CLANG_BUILD_EXAMPLES "Build CLANG example programs by default." OFF)
+add_subdirectory(examples)
 
 add_subdirectory(include)
 add_subdirectory(lib)
@@ -270,3 +275,6 @@ if( CLANG_BUILT_STANDALONE AND MSVC_VERSION EQUAL 1600 )
     file(APPEND "${CLANG_SLN_FILENAME}" "\n# This should be regenerated!\n")
   endif()
 endif()
+
+set(BUG_REPORT_URL "http://llvm.org/bugs/" CACHE STRING
+  "Default URL where bug reports are to be submitted.")

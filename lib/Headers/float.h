@@ -24,6 +24,53 @@
 #ifndef __FLOAT_H
 #define __FLOAT_H
 
+/* If we're on MinGW, fall back to the system's float.h, which might have
+ * additional definitions provided for Windows.
+ * For more details see http://msdn.microsoft.com/en-us/library/y0ybw9fy.aspx
+ */
+#if (defined(__MINGW32__) || defined(_MSC_VER)) && \
+    defined(__has_include_next) && __has_include_next(<float.h>)
+#  include_next <float.h>
+
+/* Undefine anything that we'll be redefining below. */
+#  undef FLT_EVAL_METHOD
+#  undef FLT_ROUNDS
+#  undef FLT_RADIX
+#  undef FLT_MANT_DIG
+#  undef DBL_MANT_DIG
+#  undef LDBL_MANT_DIG
+#  undef DECIMAL_DIG
+#  undef FLT_DIG
+#  undef DBL_DIG
+#  undef LDBL_DIG
+#  undef FLT_MIN_EXP
+#  undef DBL_MIN_EXP
+#  undef LDBL_MIN_EXP
+#  undef FLT_MIN_10_EXP
+#  undef DBL_MIN_10_EXP
+#  undef LDBL_MIN_10_EXP
+#  undef FLT_MAX_EXP
+#  undef DBL_MAX_EXP
+#  undef LDBL_MAX_EXP
+#  undef FLT_MAX_10_EXP
+#  undef DBL_MAX_10_EXP
+#  undef LDBL_MAX_10_EXP
+#  undef FLT_MAX
+#  undef DBL_MAX
+#  undef LDBL_MAX
+#  undef FLT_EPSILON
+#  undef DBL_EPSILON
+#  undef LDBL_EPSILON
+#  undef FLT_MIN
+#  undef DBL_MIN
+#  undef LDBL_MIN
+#  if __STDC_VERSION__ >= 201112L || !defined(__STRICT_ANSI__)
+#    undef FLT_TRUE_MIN
+#    undef DBL_TRUE_MIN
+#    undef LDBL_TRUE_MIN
+#  endif
+#endif
+
 /* Characteristics of floating point types, C99 5.2.4.2.2 */
 
 #define FLT_EVAL_METHOD __FLT_EVAL_METHOD__
@@ -67,5 +114,11 @@
 #define FLT_MIN __FLT_MIN__
 #define DBL_MIN __DBL_MIN__
 #define LDBL_MIN __LDBL_MIN__
+
+#if __STDC_VERSION__ >= 201112L || !defined(__STRICT_ANSI__)
+#  define FLT_TRUE_MIN __FLT_DENORM_MIN__
+#  define DBL_TRUE_MIN __DBL_DENORM_MIN__
+#  define LDBL_TRUE_MIN __LDBL_DENORM_MIN__
+#endif
 
 #endif /* __FLOAT_H */

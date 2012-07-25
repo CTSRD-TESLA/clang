@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -Wno-array-bounds -analyze -analyzer-checker=core,core.experimental.Overflow -verify %s
+// RUN: %clang_cc1 -Wno-array-bounds -analyze -analyzer-checker=core,experimental.security.ArrayBoundV2 -verify %s
 
 // Tests doing an out-of-bounds access after the end of an array using:
 // - constant integer index
@@ -94,7 +94,6 @@ void test2_ptr(int x) {
   p[-1] = 1; // expected-warning{{Out of bound memory access}}
 }
 
-// ** FIXME ** Doesn't work yet because we don't support pointer arithmetic.
 // Tests doing an out-of-bounds access before the start of an array using:
 // - indirect pointer to buffer, manipulated using simple pointer arithmetic
 // - constant integer index
@@ -103,7 +102,7 @@ void test2_ptr_arith(int x) {
   int buf[100];
   int *p = buf;
   --p;
-  p[0] = 1; // no-warning
+  p[0] = 1; // expected-warning {{Out of bound memory access (accessed memory precedes memory block)}}
 }
 
 // Tests doing an out-of-bounds access before the start of a multi-dimensional
@@ -135,7 +134,7 @@ void test2_multi_ok(int x) {
 void test3(int x) {
   int buf[100];
   if (x < 0)
-    buf[x] = 1; 
+    buf[x] = 1;
 }
 
 // *** FIXME ***
@@ -146,3 +145,12 @@ void test4(int x) {
   if (x > 99)
     buf[x] = 1; 
 }
+
+// Don't warn when indexing below the start of a symbolic region's whose
+// base extent we don't know.
+int *get_symbolic();
+void test_index_below_symboloc() {
+  int *buf = get_symbolic();
+  buf[-1] = 0; // no-warning;
+}
+

@@ -94,7 +94,7 @@ struct {}; // expected-warning{{declaration does not declare anything}}
 struct s2 {
   union {
     int a;
-  }
+  } // expected-warning{{expected ';' at end of declaration list}}
 }; // expected-error{{expected member name or ';' after declaration specifiers}}
 
 // Make sure we don't a.k.a. anonymous structs.
@@ -102,3 +102,9 @@ typedef struct {
   int x;
 } a_struct;
 int tmp = (a_struct) { .x = 0 }; // expected-error {{initializing 'int' with an expression of incompatible type 'a_struct'}}
+
+// This example comes out of the C11 standard; make sure we don't accidentally reject it.
+struct s {
+  struct { int i; };
+  int a[];
+};

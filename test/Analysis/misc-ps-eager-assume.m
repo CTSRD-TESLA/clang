@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -analyze -analyzer-checker=core,core.experimental -analyzer-store=region -analyzer-constraints=range -verify -fblocks %s -analyzer-eagerly-assume
+// RUN: %clang_cc1 -analyze -analyzer-checker=core,experimental.core -analyzer-store=region -analyzer-constraints=range -verify -fblocks %s -analyzer-eagerly-assume
 
 // Delta-reduced header stuff (needed for test cases).
 typedef signed char BOOL;
@@ -12,6 +12,7 @@ typedef struct _NSZone NSZone;
 @end  @protocol NSCoding  - (void)encodeWithCoder:(NSCoder *)aCoder;
 @end    @interface NSObject <NSObject> {}
 + (id)alloc;
+- (id)init;
 @end  typedef struct {}
 NSFastEnumerationState;
 @protocol NSFastEnumeration  - (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state objects:(id *)stackbuf count:(NSUInteger)len;
@@ -81,7 +82,7 @@ void pr3836(int *a, int *b) {
 
 //===---------------------------------------------------------------------===//
 // <rdar://problem/7342806>
-// This false positive occured because the symbolic constraint on a short was
+// This false positive occurred because the symbolic constraint on a short was
 // not maintained via sign extension.  The analyzer doesn't properly handle
 // the sign extension, but now tracks the constraint.  This particular
 // case relies on -analyzer-eagerly-assume because of the expression

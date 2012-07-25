@@ -1,4 +1,4 @@
-// RUN: %clang_cc1  -fsyntax-only -Wundeclared-selector -verify %s
+// RUN: %clang_cc1  -fsyntax-only -Wundeclared-selector -verify -Wno-objc-root-class %s
 
 typedef struct objc_selector *SEL;
 
@@ -18,7 +18,7 @@ typedef struct objc_selector *SEL;
 + (void) methodD
 {
   SEL d = @selector(methodD); /* Ok */
-  SEL e = @selector(methodE);  // expected-warning {{undeclared selector 'methodE'}}
+  SEL e = @selector(methodE);
 }
 
 - (void) methodE

@@ -1,12 +1,16 @@
 // RUN: %clang_cc1 -triple x86_64-unknown-unknown %s -emit-llvm -o - | FileCheck %s
-#include <stddef.h>
+
+typedef __typeof__(sizeof(0)) size_t;
 
 void t1() {
   int* a = new int;
 }
 
-// Placement.
-void* operator new(size_t, void*) throw();
+// Declare the reserved placement operators.
+void *operator new(size_t, void*) throw();
+void operator delete(void*, void*) throw();
+void *operator new[](size_t, void*) throw();
+void operator delete[](void*, void*) throw();
 
 void t2(int* a) {
   int* b = new (a) int;
@@ -162,4 +166,87 @@ void f() {
   // CHECK: call void @_ZdlPv(i8*
   delete new bool;
   // CHECK: ret void
+}
+
+namespace test15 {
+  struct A { A(); ~A(); };
+
+  // CHECK:    define void @_ZN6test155test0EPv(
+  // CHECK:      [[P:%.*]] = load i8*
+  // CHECK-NEXT: icmp eq i8* [[P]], null
+  // CHECK-NEXT: br i1
+  // CHECK:      [[T0:%.*]] = bitcast i8* [[P]] to [[A:%.*]]*
+  // CHECK-NEXT: call void @_ZN6test151AC1Ev([[A]]* [[T0]])
+  void test0(void *p) {
+    new (p) A();
+  }
+
+  // CHECK:    define void @_ZN6test155test1EPv(
+  // CHECK:      [[P:%.*]] = load i8**
+  // CHECK-NEXT: icmp eq i8* [[P]], null
+  // CHECK-NEXT: br i1
+  // CHECK:      [[BEGIN:%.*]] = bitcast i8* [[P]] to [[A:%.*]]*
+  // CHECK-NEXT: [[END:%.*]] = getelementptr inbounds [[A]]* [[BEGIN]], i64 5
+  // CHECK-NEXT: br label
+  // CHECK:      [[CUR:%.*]] = phi [[A]]* [ [[BEGIN]], {{%.*}} ], [ [[NEXT:%.*]], {{%.*}} ]
+  // CHECK-NEXT: call void @_ZN6test151AC1Ev([[A]]* [[CUR]])
+  // CHECK-NEXT: [[NEXT]] = getelementptr inbounds [[A]]* [[CUR]], i64 1
+  // CHECK-NEXT: [[DONE:%.*]] = icmp eq [[A]]* [[NEXT]], [[END]]
+  // CHECK-NEXT: br i1 [[DONE]]
+  void test1(void *p) {
+    new (p) A[5];
+  }
+
+  // TODO: it's okay if all these size calculations get dropped.
+  // FIXME: maybe we should try to throw on overflow?
+  // CHECK:    define void @_ZN6test155test2EPvi(
+  // CHECK:      [[N:%.*]] = load i32*
+  // CHECK-NEXT: [[T0:%.*]] = sext i32 [[N]] to i64
+  // CHECK-NEXT: [[T1:%.*]] = icmp slt i64 [[T0]], 0
+  // CHECK-NEXT: [[T2:%.*]] = select i1 [[T1]], i64 -1, i64 [[T0]]
+  // CHECK-NEXT: [[P:%.*]] = load i8*
+  // CHECK-NEXT: icmp eq i8* [[P]], null
+  // CHECK-NEXT: br i1
+  // CHECK:      [[BEGIN:%.*]] = bitcast i8* [[P]] to [[A:%.*]]*
+  // CHECK-NEXT: [[ISEMPTY:%.*]] = icmp eq i64 [[T0]], 0
+  // CHECK-NEXT: br i1 [[ISEMPTY]],
+  // CHECK:      [[END:%.*]] = getelementptr inbounds [[A]]* [[BEGIN]], i64 [[T0]]
+  // CHECK-NEXT: br label
+  // CHECK:      [[CUR:%.*]] = phi [[A]]* [ [[BEGIN]],
+  // CHECK-NEXT: call void @_ZN6test151AC1Ev([[A]]* [[CUR]])
+  void test2(void *p, int n) {
+    new (p) A[n];
+  }
+}
+
+namespace PR10197 {
+  // CHECK: define weak_odr void @_ZN7PR101971fIiEEvv()
+  template<typename T>
+  void f() {
+    // CHECK: [[CALL:%.*]] = call noalias i8* @_Znwm
+    // CHECK-NEXT: [[CASTED:%.*]] = bitcast i8* [[CALL]] to 
+    new T;
+    // CHECK-NEXT: ret void
+  }
+
+  template void f<int>();
+}
+
+namespace PR11523 {
+  class MyClass;
+  typedef int MyClass::* NewTy;
+  // CHECK: define i64* @_ZN7PR115231fEv
+  // CHECK: store i64 -1
+  NewTy* f() { return new NewTy[2](); }
+}
+
+namespace PR11757 {
+  // Make sure we elide the copy construction.
+  struct X { X(); X(const X&); };
+  X* a(X* x) { return new X(X()); }
+  // CHECK: define {{.*}} @_ZN7PR117571aEPNS_1XE
+  // CHECK: [[CALL:%.*]] = call noalias i8* @_Znwm
+  // CHECK-NEXT: [[CASTED:%.*]] = bitcast i8* [[CALL]] to
+  // CHECK-NEXT: call void @_ZN7PR117571XC1Ev({{.*}}* [[CASTED]])
+  // CHECK-NEXT: ret {{.*}} [[CASTED]]
 }

@@ -12,17 +12,21 @@
 //===----------------------------------------------------------------------===//
 
 #include "ClangSACheckers.h"
+#include "clang/Analysis/AnalysisContext.h"
+#include "clang/AST/StmtVisitor.h"
+#include "clang/Basic/TargetInfo.h"
 #include "clang/StaticAnalyzer/Core/Checker.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugReporter.h"
-#include "clang/Basic/TargetInfo.h"
-#include "clang/AST/StmtVisitor.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/AnalysisManager.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace clang;
 using namespace ento;
 
 static bool isArc4RandomAvailable(const ASTContext &Ctx) {
-  const llvm::Triple &T = Ctx.Target.getTriple();
+  const llvm::Triple &T = Ctx.getTargetInfo().getTriple();
   return T.getVendor() == llvm::Triple::Apple ||
          T.getOS() == llvm::Triple::FreeBSD ||
          T.getOS() == llvm::Triple::NetBSD ||
@@ -31,24 +35,40 @@ static bool isArc4RandomAvailable(const ASTContext &Ctx) {
 }
 
 namespace {
+struct DefaultBool {
+  bool val;
+  DefaultBool() : val(false) {}
+  operator bool() const { return val; }
+  DefaultBool &operator=(bool b) { val = b; return *this; }
+};
+  
+struct ChecksFilter {
+  DefaultBool check_gets;
+  DefaultBool check_getpw;
+  DefaultBool check_mktemp;
+  DefaultBool check_mkstemp;
+  DefaultBool check_strcpy;
+  DefaultBool check_rand;
+  DefaultBool check_vfork;
+  DefaultBool check_FloatLoopCounter;
+  DefaultBool check_UncheckedReturn;
+};
+  
 class WalkAST : public StmtVisitor<WalkAST> {
   BugReporter &BR;
-  IdentifierInfo *II_gets;
-  IdentifierInfo *II_getpw;
-  IdentifierInfo *II_mktemp;
-  enum { num_rands = 9 };
-  IdentifierInfo *II_rand[num_rands];
-  IdentifierInfo *II_random;
+  AnalysisDeclContext* AC;
   enum { num_setids = 6 };
   IdentifierInfo *II_setid[num_setids];
 
   const bool CheckRand;
+  const ChecksFilter &filter;
 
 public:
-  WalkAST(BugReporter &br) : BR(br),
-                             II_gets(0), II_getpw(0), II_mktemp(0),
-                             II_rand(), II_random(0), II_setid(),
-                 CheckRand(isArc4RandomAvailable(BR.getContext())) {}
+  WalkAST(BugReporter &br, AnalysisDeclContext* ac,
+          const ChecksFilter &f)
+  : BR(br), AC(ac), II_setid(),
+    CheckRand(isArc4RandomAvailable(BR.getContext())),
+    filter(f) {}
 
   // Statement visitor methods.
   void VisitCallExpr(CallExpr *CE);
@@ -59,29 +79,25 @@ public:
   void VisitChildren(Stmt *S);
 
   // Helpers.
-  IdentifierInfo *GetIdentifier(IdentifierInfo *& II, const char *str);
+  bool checkCall_strCommon(const CallExpr *CE, const FunctionDecl *FD);
+
+  typedef void (WalkAST::*FnCheck)(const CallExpr *,
+				   const FunctionDecl *);
 
   // Checker-specific methods.
-  void CheckLoopConditionForFloat(const ForStmt *FS);
-  void CheckCall_gets(const CallExpr *CE, const FunctionDecl *FD);
-  void CheckCall_getpw(const CallExpr *CE, const FunctionDecl *FD);
-  void CheckCall_mktemp(const CallExpr *CE, const FunctionDecl *FD);
-  void CheckCall_rand(const CallExpr *CE, const FunctionDecl *FD);
-  void CheckCall_random(const CallExpr *CE, const FunctionDecl *FD);
-  void CheckUncheckedReturnValue(CallExpr *CE);
+  void checkLoopConditionForFloat(const ForStmt *FS);
+  void checkCall_gets(const CallExpr *CE, const FunctionDecl *FD);
+  void checkCall_getpw(const CallExpr *CE, const FunctionDecl *FD);
+  void checkCall_mktemp(const CallExpr *CE, const FunctionDecl *FD);
+  void checkCall_mkstemp(const CallExpr *CE, const FunctionDecl *FD);
+  void checkCall_strcpy(const CallExpr *CE, const FunctionDecl *FD);
+  void checkCall_strcat(const CallExpr *CE, const FunctionDecl *FD);
+  void checkCall_rand(const CallExpr *CE, const FunctionDecl *FD);
+  void checkCall_random(const CallExpr *CE, const FunctionDecl *FD);
+  void checkCall_vfork(const CallExpr *CE, const FunctionDecl *FD);
+  void checkUncheckedReturnValue(CallExpr *CE);
 };
 } // end anonymous namespace
-
-//===----------------------------------------------------------------------===//
-// Helper methods.
-//===----------------------------------------------------------------------===//
-
-IdentifierInfo *WalkAST::GetIdentifier(IdentifierInfo *& II, const char *str) {
-  if (!II)
-    II = &BR.getContext().Idents.get(str);
-
-  return II;
-}
 
 //===----------------------------------------------------------------------===//
 // AST walking.
@@ -94,15 +110,47 @@ void WalkAST::VisitChildren(Stmt *S) {
 }
 
 void WalkAST::VisitCallExpr(CallExpr *CE) {
-  if (const FunctionDecl *FD = CE->getDirectCallee()) {
-    CheckCall_gets(CE, FD);
-    CheckCall_getpw(CE, FD);
-    CheckCall_mktemp(CE, FD);
-    if (CheckRand) {
-      CheckCall_rand(CE, FD);
-      CheckCall_random(CE, FD);
-    }
-  }
+  // Get the callee.  
+  const FunctionDecl *FD = CE->getDirectCallee();
+
+  if (!FD)
+    return;
+
+  // Get the name of the callee. If it's a builtin, strip off the prefix.
+  IdentifierInfo *II = FD->getIdentifier();
+  if (!II)   // if no identifier, not a simple C function
+    return;
+  StringRef Name = II->getName();
+  if (Name.startswith("__builtin_"))
+    Name = Name.substr(10);
+
+  // Set the evaluation function by switching on the callee name.
+  FnCheck evalFunction = llvm::StringSwitch<FnCheck>(Name)
+    .Case("gets", &WalkAST::checkCall_gets)
+    .Case("getpw", &WalkAST::checkCall_getpw)
+    .Case("mktemp", &WalkAST::checkCall_mktemp)
+    .Case("mkstemp", &WalkAST::checkCall_mkstemp)
+    .Case("mkdtemp", &WalkAST::checkCall_mkstemp)
+    .Case("mkstemps", &WalkAST::checkCall_mkstemp)
+    .Cases("strcpy", "__strcpy_chk", &WalkAST::checkCall_strcpy)
+    .Cases("strcat", "__strcat_chk", &WalkAST::checkCall_strcat)
+    .Case("drand48", &WalkAST::checkCall_rand)
+    .Case("erand48", &WalkAST::checkCall_rand)
+    .Case("jrand48", &WalkAST::checkCall_rand)
+    .Case("lrand48", &WalkAST::checkCall_rand)
+    .Case("mrand48", &WalkAST::checkCall_rand)
+    .Case("nrand48", &WalkAST::checkCall_rand)
+    .Case("lcong48", &WalkAST::checkCall_rand)
+    .Case("rand", &WalkAST::checkCall_rand)
+    .Case("rand_r", &WalkAST::checkCall_rand)
+    .Case("random", &WalkAST::checkCall_random)
+    .Case("vfork", &WalkAST::checkCall_vfork)
+    .Default(NULL);
+
+  // If the callee isn't defined, it is not of security concern.
+  // Check and evaluate the call.
+  if (evalFunction)
+    (this->*evalFunction)(CE, FD);
 
   // Recurse and check children.
   VisitChildren(CE);
@@ -112,13 +160,13 @@ void WalkAST::VisitCompoundStmt(CompoundStmt *S) {
   for (Stmt::child_iterator I = S->child_begin(), E = S->child_end(); I!=E; ++I)
     if (Stmt *child = *I) {
       if (CallExpr *CE = dyn_cast<CallExpr>(child))
-        CheckUncheckedReturnValue(CE);
+        checkUncheckedReturnValue(CE);
       Visit(child);
     }
 }
 
 void WalkAST::VisitForStmt(ForStmt *FS) {
-  CheckLoopConditionForFloat(FS);
+  checkLoopConditionForFloat(FS);
 
   // Recurse and check children.
   VisitChildren(FS);
@@ -131,7 +179,7 @@ void WalkAST::VisitForStmt(ForStmt *FS) {
 //===----------------------------------------------------------------------===//
 
 static const DeclRefExpr*
-GetIncrementedVar(const Expr *expr, const VarDecl *x, const VarDecl *y) {
+getIncrementedVar(const Expr *expr, const VarDecl *x, const VarDecl *y) {
   expr = expr->IgnoreParenCasts();
 
   if (const BinaryOperator *B = dyn_cast<BinaryOperator>(expr)) {
@@ -139,10 +187,10 @@ GetIncrementedVar(const Expr *expr, const VarDecl *x, const VarDecl *y) {
           B->getOpcode() == BO_Comma))
       return NULL;
 
-    if (const DeclRefExpr *lhs = GetIncrementedVar(B->getLHS(), x, y))
+    if (const DeclRefExpr *lhs = getIncrementedVar(B->getLHS(), x, y))
       return lhs;
 
-    if (const DeclRefExpr *rhs = GetIncrementedVar(B->getRHS(), x, y))
+    if (const DeclRefExpr *rhs = getIncrementedVar(B->getRHS(), x, y))
       return rhs;
 
     return NULL;
@@ -155,7 +203,7 @@ GetIncrementedVar(const Expr *expr, const VarDecl *x, const VarDecl *y) {
 
   if (const UnaryOperator *U = dyn_cast<UnaryOperator>(expr))
     return U->isIncrementDecrementOp()
-      ? GetIncrementedVar(U->getSubExpr(), x, y) : NULL;
+      ? getIncrementedVar(U->getSubExpr(), x, y) : NULL;
 
   return NULL;
 }
@@ -164,7 +212,10 @@ GetIncrementedVar(const Expr *expr, const VarDecl *x, const VarDecl *y) {
 ///  use a floating point variable as a loop counter.
 ///  CERT: FLP30-C, FLP30-CPP.
 ///
-void WalkAST::CheckLoopConditionForFloat(const ForStmt *FS) {
+void WalkAST::checkLoopConditionForFloat(const ForStmt *FS) {
+  if (!filter.check_FloatLoopCounter)
+    return;
+
   // Does the loop have a condition?
   const Expr *condition = FS->getCond();
 
@@ -211,7 +262,7 @@ void WalkAST::CheckLoopConditionForFloat(const ForStmt *FS) {
     return;
 
   // Does either variable appear in increment?
-  const DeclRefExpr *drInc = GetIncrementedVar(increment, vdLHS, vdRHS);
+  const DeclRefExpr *drInc = getIncrementedVar(increment, vdLHS, vdRHS);
 
   if (!drInc)
     return;
@@ -220,8 +271,8 @@ void WalkAST::CheckLoopConditionForFloat(const ForStmt *FS) {
   // referenced the compared variable.
   const DeclRefExpr *drCond = vdLHS == drInc->getDecl() ? drLHS : drRHS;
 
-  llvm::SmallVector<SourceRange, 2> ranges;
-  llvm::SmallString<256> sbuf;
+  SmallVector<SourceRange, 2> ranges;
+  SmallString<256> sbuf;
   llvm::raw_svector_ostream os(sbuf);
 
   os << "Variable '" << drCond->getDecl()->getName()
@@ -232,8 +283,12 @@ void WalkAST::CheckLoopConditionForFloat(const ForStmt *FS) {
   ranges.push_back(drInc->getSourceRange());
 
   const char *bugType = "Floating point variable used as loop counter";
-  BR.EmitBasicReport(bugType, "Security", os.str(),
-                     FS->getLocStart(), ranges.data(), ranges.size());
+
+  PathDiagnosticLocation FSLoc =
+    PathDiagnosticLocation::createBegin(FS, BR.getSourceManager(), AC);
+  BR.EmitBasicReport(AC->getDecl(),
+                     bugType, "Security", os.str(),
+                     FSLoc, ranges.data(), ranges.size());
 }
 
 //===----------------------------------------------------------------------===//
@@ -243,10 +298,10 @@ void WalkAST::CheckLoopConditionForFloat(const ForStmt *FS) {
 // CWE-242: Use of Inherently Dangerous Function
 //===----------------------------------------------------------------------===//
 
-void WalkAST::CheckCall_gets(const CallExpr *CE, const FunctionDecl *FD) {
-  if (FD->getIdentifier() != GetIdentifier(II_gets, "gets"))
+void WalkAST::checkCall_gets(const CallExpr *CE, const FunctionDecl *FD) {
+  if (!filter.check_gets)
     return;
-
+  
   const FunctionProtoType *FPT
     = dyn_cast<FunctionProtoType>(FD->getType().IgnoreParens());
   if (!FPT)
@@ -266,11 +321,14 @@ void WalkAST::CheckCall_gets(const CallExpr *CE, const FunctionDecl *FD) {
 
   // Issue a warning.
   SourceRange R = CE->getCallee()->getSourceRange();
-  BR.EmitBasicReport("Potential buffer overflow in call to 'gets'",
+  PathDiagnosticLocation CELoc =
+    PathDiagnosticLocation::createBegin(CE, BR.getSourceManager(), AC);
+  BR.EmitBasicReport(AC->getDecl(),
+                     "Potential buffer overflow in call to 'gets'",
                      "Security",
                      "Call to function 'gets' is extremely insecure as it can "
                      "always result in a buffer overflow",
-                     CE->getLocStart(), &R, 1);
+                     CELoc, &R, 1);
 }
 
 //===----------------------------------------------------------------------===//
@@ -278,8 +336,8 @@ void WalkAST::CheckCall_gets(const CallExpr *CE, const FunctionDecl *FD) {
 // CWE-477: Use of Obsolete Functions
 //===----------------------------------------------------------------------===//
 
-void WalkAST::CheckCall_getpw(const CallExpr *CE, const FunctionDecl *FD) {
-  if (FD->getIdentifier() != GetIdentifier(II_getpw, "getpw"))
+void WalkAST::checkCall_getpw(const CallExpr *CE, const FunctionDecl *FD) {
+  if (!filter.check_getpw)
     return;
 
   const FunctionProtoType *FPT
@@ -305,28 +363,35 @@ void WalkAST::CheckCall_getpw(const CallExpr *CE, const FunctionDecl *FD) {
 
   // Issue a warning.
   SourceRange R = CE->getCallee()->getSourceRange();
-  BR.EmitBasicReport("Potential buffer overflow in call to 'getpw'",
+  PathDiagnosticLocation CELoc =
+    PathDiagnosticLocation::createBegin(CE, BR.getSourceManager(), AC);
+  BR.EmitBasicReport(AC->getDecl(),
+                     "Potential buffer overflow in call to 'getpw'",
                      "Security",
                      "The getpw() function is dangerous as it may overflow the "
                      "provided buffer. It is obsoleted by getpwuid().",
-                     CE->getLocStart(), &R, 1);
+                     CELoc, &R, 1);
 }
 
 //===----------------------------------------------------------------------===//
-// Check: Any use of 'mktemp' is insecure.It is obsoleted by mkstemp().
+// Check: Any use of 'mktemp' is insecure.  It is obsoleted by mkstemp().
 // CWE-377: Insecure Temporary File
 //===----------------------------------------------------------------------===//
 
-void WalkAST::CheckCall_mktemp(const CallExpr *CE, const FunctionDecl *FD) {
-  if (FD->getIdentifier() != GetIdentifier(II_mktemp, "mktemp"))
+void WalkAST::checkCall_mktemp(const CallExpr *CE, const FunctionDecl *FD) {
+  if (!filter.check_mktemp) {
+    // Fall back to the security check of looking for enough 'X's in the
+    // format string, since that is a less severe warning.
+    checkCall_mkstemp(CE, FD);
     return;
+  }
 
   const FunctionProtoType *FPT
     = dyn_cast<FunctionProtoType>(FD->getType().IgnoreParens());
   if(!FPT)
     return;
 
-  // Verify that the funcion takes a single argument.
+  // Verify that the function takes a single argument.
   if (FPT->getNumArgs() != 1)
     return;
 
@@ -341,11 +406,183 @@ void WalkAST::CheckCall_mktemp(const CallExpr *CE, const FunctionDecl *FD) {
 
   // Issue a waring.
   SourceRange R = CE->getCallee()->getSourceRange();
-  BR.EmitBasicReport("Potential insecure temporary file in call 'mktemp'",
+  PathDiagnosticLocation CELoc =
+    PathDiagnosticLocation::createBegin(CE, BR.getSourceManager(), AC);
+  BR.EmitBasicReport(AC->getDecl(),
+                     "Potential insecure temporary file in call 'mktemp'",
                      "Security",
                      "Call to function 'mktemp' is insecure as it always "
-                     "creates or uses insecure temporary file.  Use 'mkstemp' instead",
-                     CE->getLocStart(), &R, 1);
+                     "creates or uses insecure temporary file.  Use 'mkstemp' "
+                     "instead",
+                     CELoc, &R, 1);
+}
+
+
+//===----------------------------------------------------------------------===//
+// Check: Use of 'mkstemp', 'mktemp', 'mkdtemp' should contain at least 6 X's.
+//===----------------------------------------------------------------------===//
+
+void WalkAST::checkCall_mkstemp(const CallExpr *CE, const FunctionDecl *FD) {
+  if (!filter.check_mkstemp)
+    return;
+
+  StringRef Name = FD->getIdentifier()->getName();
+  std::pair<signed, signed> ArgSuffix =
+    llvm::StringSwitch<std::pair<signed, signed> >(Name)
+      .Case("mktemp", std::make_pair(0,-1))
+      .Case("mkstemp", std::make_pair(0,-1))
+      .Case("mkdtemp", std::make_pair(0,-1))
+      .Case("mkstemps", std::make_pair(0,1))
+      .Default(std::make_pair(-1, -1));
+  
+  assert(ArgSuffix.first >= 0 && "Unsupported function");
+
+  // Check if the number of arguments is consistent with out expectations.
+  unsigned numArgs = CE->getNumArgs();
+  if ((signed) numArgs <= ArgSuffix.first)
+    return;
+  
+  const StringLiteral *strArg =
+    dyn_cast<StringLiteral>(CE->getArg((unsigned)ArgSuffix.first)
+                              ->IgnoreParenImpCasts());
+  
+  // Currently we only handle string literals.  It is possible to do better,
+  // either by looking at references to const variables, or by doing real
+  // flow analysis.
+  if (!strArg || strArg->getCharByteWidth() != 1)
+    return;
+
+  // Count the number of X's, taking into account a possible cutoff suffix.
+  StringRef str = strArg->getString();
+  unsigned numX = 0;
+  unsigned n = str.size();
+
+  // Take into account the suffix.
+  unsigned suffix = 0;
+  if (ArgSuffix.second >= 0) {
+    const Expr *suffixEx = CE->getArg((unsigned)ArgSuffix.second);
+    llvm::APSInt Result;
+    if (!suffixEx->EvaluateAsInt(Result, BR.getContext()))
+      return;
+    // FIXME: Issue a warning.
+    if (Result.isNegative())
+      return;
+    suffix = (unsigned) Result.getZExtValue();
+    n = (n > suffix) ? n - suffix : 0;
+  }
+  
+  for (unsigned i = 0; i < n; ++i)
+    if (str[i] == 'X') ++numX;
+  
+  if (numX >= 6)
+    return;
+  
+  // Issue a warning.
+  SourceRange R = strArg->getSourceRange();
+  PathDiagnosticLocation CELoc =
+    PathDiagnosticLocation::createBegin(CE, BR.getSourceManager(), AC);
+  SmallString<512> buf;
+  llvm::raw_svector_ostream out(buf);
+  out << "Call to '" << Name << "' should have at least 6 'X's in the"
+    " format string to be secure (" << numX << " 'X'";
+  if (numX != 1)
+    out << 's';
+  out << " seen";
+  if (suffix) {
+    out << ", " << suffix << " character";
+    if (suffix > 1)
+      out << 's';
+    out << " used as a suffix";
+  }
+  out << ')';
+  BR.EmitBasicReport(AC->getDecl(),
+                     "Insecure temporary file creation", "Security",
+                     out.str(), CELoc, &R, 1);
+}
+
+//===----------------------------------------------------------------------===//
+// Check: Any use of 'strcpy' is insecure.
+//
+// CWE-119: Improper Restriction of Operations within 
+// the Bounds of a Memory Buffer 
+//===----------------------------------------------------------------------===//
+void WalkAST::checkCall_strcpy(const CallExpr *CE, const FunctionDecl *FD) {
+  if (!filter.check_strcpy)
+    return;
+  
+  if (!checkCall_strCommon(CE, FD))
+    return;
+
+  // Issue a warning.
+  SourceRange R = CE->getCallee()->getSourceRange();
+  PathDiagnosticLocation CELoc =
+    PathDiagnosticLocation::createBegin(CE, BR.getSourceManager(), AC);
+  BR.EmitBasicReport(AC->getDecl(),
+                     "Potential insecure memory buffer bounds restriction in "
+                     "call 'strcpy'",
+                     "Security",
+                     "Call to function 'strcpy' is insecure as it does not "
+                     "provide bounding of the memory buffer. Replace "
+                     "unbounded copy functions with analogous functions that "
+                     "support length arguments such as 'strlcpy'. CWE-119.",
+                     CELoc, &R, 1);
+}
+
+//===----------------------------------------------------------------------===//
+// Check: Any use of 'strcat' is insecure.
+//
+// CWE-119: Improper Restriction of Operations within 
+// the Bounds of a Memory Buffer 
+//===----------------------------------------------------------------------===//
+void WalkAST::checkCall_strcat(const CallExpr *CE, const FunctionDecl *FD) {
+  if (!filter.check_strcpy)
+    return;
+
+  if (!checkCall_strCommon(CE, FD))
+    return;
+
+  // Issue a warning.
+  SourceRange R = CE->getCallee()->getSourceRange();
+  PathDiagnosticLocation CELoc =
+    PathDiagnosticLocation::createBegin(CE, BR.getSourceManager(), AC);
+  BR.EmitBasicReport(AC->getDecl(),
+                     "Potential insecure memory buffer bounds restriction in "
+                     "call 'strcat'",
+                     "Security",
+                     "Call to function 'strcat' is insecure as it does not "
+                     "provide bounding of the memory buffer. Replace "
+                     "unbounded copy functions with analogous functions that "
+                     "support length arguments such as 'strlcat'. CWE-119.",
+                     CELoc, &R, 1);
+}
+
+//===----------------------------------------------------------------------===//
+// Common check for str* functions with no bounds parameters.
+//===----------------------------------------------------------------------===//
+bool WalkAST::checkCall_strCommon(const CallExpr *CE, const FunctionDecl *FD) {
+  const FunctionProtoType *FPT
+    = dyn_cast<FunctionProtoType>(FD->getType().IgnoreParens());
+  if (!FPT)
+    return false;
+
+  // Verify the function takes two arguments, three in the _chk version.
+  int numArgs = FPT->getNumArgs();
+  if (numArgs != 2 && numArgs != 3)
+    return false;
+
+  // Verify the type for both arguments.
+  for (int i = 0; i < 2; i++) {
+    // Verify that the arguments are pointers.
+    const PointerType *PT = dyn_cast<PointerType>(FPT->getArgType(i));
+    if (!PT)
+      return false;
+
+    // Verify that the argument is a 'char*'.
+    if (PT->getPointeeType().getUnqualifiedType() != BR.getContext().CharTy)
+      return false;
+  }
+
+  return true;
 }
 
 //===----------------------------------------------------------------------===//
@@ -354,27 +591,8 @@ void WalkAST::CheckCall_mktemp(const CallExpr *CE, const FunctionDecl *FD) {
 // CWE-338: Use of cryptographically weak prng
 //===----------------------------------------------------------------------===//
 
-void WalkAST::CheckCall_rand(const CallExpr *CE, const FunctionDecl *FD) {
-  if (II_rand[0] == NULL) {
-    // This check applies to these functions
-    static const char * const identifiers[num_rands] = {
-      "drand48", "erand48", "jrand48", "lrand48", "mrand48", "nrand48",
-      "lcong48",
-      "rand", "rand_r"
-    };
-
-    for (size_t i = 0; i < num_rands; i++)
-      II_rand[i] = &BR.getContext().Idents.get(identifiers[i]);
-  }
-
-  const IdentifierInfo *id = FD->getIdentifier();
-  size_t identifierid;
-
-  for (identifierid = 0; identifierid < num_rands; identifierid++)
-    if (id == II_rand[identifierid])
-      break;
-
-  if (identifierid >= num_rands)
+void WalkAST::checkCall_rand(const CallExpr *CE, const FunctionDecl *FD) {
+  if (!filter.check_rand || !CheckRand)
     return;
 
   const FunctionProtoType *FTP
@@ -396,18 +614,21 @@ void WalkAST::CheckCall_rand(const CallExpr *CE, const FunctionDecl *FD) {
     return;
 
   // Issue a warning.
-  llvm::SmallString<256> buf1;
+  SmallString<256> buf1;
   llvm::raw_svector_ostream os1(buf1);
-  os1 << '\'' << FD << "' is a poor random number generator";
+  os1 << '\'' << *FD << "' is a poor random number generator";
 
-  llvm::SmallString<256> buf2;
+  SmallString<256> buf2;
   llvm::raw_svector_ostream os2(buf2);
-  os2 << "Function '" << FD
+  os2 << "Function '" << *FD
       << "' is obsolete because it implements a poor random number generator."
       << "  Use 'arc4random' instead";
 
   SourceRange R = CE->getCallee()->getSourceRange();
-  BR.EmitBasicReport(os1.str(), "Security", os2.str(),CE->getLocStart(), &R, 1);
+  PathDiagnosticLocation CELoc =
+    PathDiagnosticLocation::createBegin(CE, BR.getSourceManager(), AC);
+  BR.EmitBasicReport(AC->getDecl(), os1.str(), "Security", os2.str(),
+                     CELoc, &R, 1);
 }
 
 //===----------------------------------------------------------------------===//
@@ -415,8 +636,8 @@ void WalkAST::CheckCall_rand(const CallExpr *CE, const FunctionDecl *FD) {
 // Originally: <rdar://problem/63371000>
 //===----------------------------------------------------------------------===//
 
-void WalkAST::CheckCall_random(const CallExpr *CE, const FunctionDecl *FD) {
-  if (FD->getIdentifier() != GetIdentifier(II_random, "random"))
+void WalkAST::checkCall_random(const CallExpr *CE, const FunctionDecl *FD) {
+  if (!CheckRand || !filter.check_rand)
     return;
 
   const FunctionProtoType *FTP
@@ -430,11 +651,38 @@ void WalkAST::CheckCall_random(const CallExpr *CE, const FunctionDecl *FD) {
 
   // Issue a warning.
   SourceRange R = CE->getCallee()->getSourceRange();
-  BR.EmitBasicReport("'random' is not a secure random number generator",
+  PathDiagnosticLocation CELoc =
+    PathDiagnosticLocation::createBegin(CE, BR.getSourceManager(), AC);
+  BR.EmitBasicReport(AC->getDecl(),
+                     "'random' is not a secure random number generator",
                      "Security",
                      "The 'random' function produces a sequence of values that "
                      "an adversary may be able to predict.  Use 'arc4random' "
-                     "instead", CE->getLocStart(), &R, 1);
+                     "instead", CELoc, &R, 1);
+}
+
+//===----------------------------------------------------------------------===//
+// Check: 'vfork' should not be used.
+// POS33-C: Do not use vfork().
+//===----------------------------------------------------------------------===//
+
+void WalkAST::checkCall_vfork(const CallExpr *CE, const FunctionDecl *FD) {
+  if (!filter.check_vfork)
+    return;
+
+  // All calls to vfork() are insecure, issue a warning.
+  SourceRange R = CE->getCallee()->getSourceRange();
+  PathDiagnosticLocation CELoc =
+    PathDiagnosticLocation::createBegin(CE, BR.getSourceManager(), AC);
+  BR.EmitBasicReport(AC->getDecl(),
+                     "Potential insecure implementation-specific behavior in "
+                     "call 'vfork'",
+                     "Security",
+                     "Call to function 'vfork' is insecure as it can lead to "
+                     "denial of service situations in the parent process. "
+                     "Replace calls to vfork with calls to the safer "
+                     "'posix_spawn' function",
+                     CELoc, &R, 1);
 }
 
 //===----------------------------------------------------------------------===//
@@ -442,7 +690,10 @@ void WalkAST::CheckCall_random(const CallExpr *CE, const FunctionDecl *FD) {
 // Originally: <rdar://problem/6337132>
 //===----------------------------------------------------------------------===//
 
-void WalkAST::CheckUncheckedReturnValue(CallExpr *CE) {
+void WalkAST::checkUncheckedReturnValue(CallExpr *CE) {
+  if (!filter.check_UncheckedReturn)
+    return;
+  
   const FunctionDecl *FD = CE->getDirectCallee();
   if (!FD)
     return;
@@ -483,18 +734,21 @@ void WalkAST::CheckUncheckedReturnValue(CallExpr *CE) {
       return;
 
   // Issue a warning.
-  llvm::SmallString<256> buf1;
+  SmallString<256> buf1;
   llvm::raw_svector_ostream os1(buf1);
-  os1 << "Return value is not checked in call to '" << FD << '\'';
+  os1 << "Return value is not checked in call to '" << *FD << '\'';
 
-  llvm::SmallString<256> buf2;
+  SmallString<256> buf2;
   llvm::raw_svector_ostream os2(buf2);
-  os2 << "The return value from the call to '" << FD
-      << "' is not checked.  If an error occurs in '" << FD
+  os2 << "The return value from the call to '" << *FD
+      << "' is not checked.  If an error occurs in '" << *FD
       << "', the following code may execute with unexpected privileges";
 
   SourceRange R = CE->getCallee()->getSourceRange();
-  BR.EmitBasicReport(os1.str(), "Security", os2.str(),CE->getLocStart(), &R, 1);
+  PathDiagnosticLocation CELoc =
+    PathDiagnosticLocation::createBegin(CE, BR.getSourceManager(), AC);
+  BR.EmitBasicReport(AC->getDecl(), os1.str(), "Security", os2.str(),
+                     CELoc, &R, 1);
 }
 
 //===----------------------------------------------------------------------===//
@@ -504,14 +758,29 @@ void WalkAST::CheckUncheckedReturnValue(CallExpr *CE) {
 namespace {
 class SecuritySyntaxChecker : public Checker<check::ASTCodeBody> {
 public:
+  ChecksFilter filter;
+  
   void checkASTCodeBody(const Decl *D, AnalysisManager& mgr,
                         BugReporter &BR) const {
-    WalkAST walker(BR);
+    WalkAST walker(BR, mgr.getAnalysisDeclContext(D), filter);
     walker.Visit(D->getBody());
   }
 };
 }
 
-void ento::registerSecuritySyntaxChecker(CheckerManager &mgr) {
-  mgr.registerChecker<SecuritySyntaxChecker>();
+#define REGISTER_CHECKER(name) \
+void ento::register##name(CheckerManager &mgr) {\
+  mgr.registerChecker<SecuritySyntaxChecker>()->filter.check_##name = true;\
 }
+
+REGISTER_CHECKER(gets)
+REGISTER_CHECKER(getpw)
+REGISTER_CHECKER(mkstemp)
+REGISTER_CHECKER(mktemp)
+REGISTER_CHECKER(strcpy)
+REGISTER_CHECKER(rand)
+REGISTER_CHECKER(vfork)
+REGISTER_CHECKER(FloatLoopCounter)
+REGISTER_CHECKER(UncheckedReturn)
+
+

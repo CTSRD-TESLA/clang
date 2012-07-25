@@ -1,8 +1,10 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN"
+          "http://www.w3.org/TR/html4/strict.dtd">
 <html>
 <head>
 <title>"Clang" CFE Internals Manual</title>
-<link type="text/css" rel="stylesheet" href="../menu.css" />
-<link type="text/css" rel="stylesheet" href="../content.css" />
+<link type="text/css" rel="stylesheet" href="../menu.css">
+<link type="text/css" rel="stylesheet" href="../content.css">
 <style type="text/css">
 td {
 	vertical-align: top;
@@ -19,7 +21,7 @@ td {
 
 <ul>
 <li><a href="#intro">Introduction</a></li>
-<li><a href="#libsystem">LLVM System and Support Libraries</a></li>
+<li><a href="#libsupport">LLVM Support Library</a></li>
 <li><a href="#libbasic">The Clang 'Basic' Library</a>
   <ul>
   <li><a href="#Diagnostics">The Diagnostics Subsystem</a></li>
@@ -29,13 +31,9 @@ td {
   </ul>
 </li>
 <li><a href="#libdriver">The Driver Library</a>
-  <ul>
-  </ul>
 </li>
 <li><a href="#pch">Precompiled Headers</a>
 <li><a href="#libfrontend">The Frontend Library</a>
-  <ul>
-  </ul>
 </li>
 <li><a href="#liblex">The Lexer and Preprocessor Library</a>
   <ul>
@@ -47,8 +45,6 @@ td {
   </ul>
 </li>
 <li><a href="#libparse">The Parser Library</a>
-  <ul>
-  </ul>
 </li>
 <li><a href="#libast">The AST Library</a>
   <ul>
@@ -68,10 +64,10 @@ td {
   <li><a href="#Constants">Constant Folding in the Clang AST</a></li>
   </ul>
 </li>
-<li><a href="libIndex.html">The Index Library</a></li>
 <li><a href="#Howtos">Howto guides</a>
   <ul>
     <li><a href="#AddingAttributes">How to add an attribute</a></li>
+    <li><a href="#AddingExprStmt">How to add a new expression or statement</a></li>
   </ul>
 </li>
 </ul>
@@ -89,15 +85,13 @@ Clang, not for end-users.  The description below is categorized by
 libraries, and does not describe any of the clients of the libraries.</p>
 
 <!-- ======================================================================= -->
-<h2 id="libsystem">LLVM System and Support Libraries</h2>
+<h2 id="libsupport">LLVM Support Library</h2>
 <!-- ======================================================================= -->
 
-<p>The LLVM libsystem library provides the basic Clang system abstraction layer,
-which is used for file system access.  The LLVM libsupport library provides many
-underlying libraries and <a 
-href="http://llvm.org/docs/ProgrammersManual.html">data-structures</a>,
- including command line option
-processing and various containers.</p>
+<p>The LLVM libsupport library provides many underlying libraries and
+<a href="http://llvm.org/docs/ProgrammersManual.html">data-structures</a>,
+including command line option processing, various containers and a system
+abstraction layer, which is used for file system access.</p>
 
 <!-- ======================================================================= -->
 <h2 id="libbasic">The Clang 'Basic' Library</h2>
@@ -137,8 +131,8 @@ implemented.  A representative example of a diagnostic is:</p>
 
 <pre>
 t.c:38:15: error: invalid operands to binary expression ('int *' and '_Complex float')
-   <font color="darkgreen">P = (P-42) + Gamma*4;</font>
-       <font color="blue">~~~~~~ ^ ~~~~~~~</font>
+   <span style="color:darkgreen">P = (P-42) + Gamma*4;</span>
+       <span style="color:blue">~~~~~~ ^ ~~~~~~~</span>
 </pre>
 
 <p>In this example, you can see the English translation, the severity (error),
@@ -267,7 +261,7 @@ including variable names, types, labels, etc.  The 'select' format can be
 used to achieve this sort of thing in a localizable way, see below.</p>
 
 <!-- ==================================== -->
-<h4>Formatting a Diagnostic Argument</a></h4>
+<h4>Formatting a Diagnostic Argument</h4>
 <!-- ==================================== -->
 
 <p>Arguments to diagnostics are fully typed internally, and come from a couple
@@ -363,6 +357,12 @@ Clang:</p>
 <tr><td>Example:</td><td><tt>"candidate found by name lookup is %q0"</tt></td></tr>
 <tr><td>Class:</td><td>NamedDecl*</td></tr>
 <tr><td>Description</td><td><p>This formatter indicates that the fully-qualified name of the declaration should be printed, e.g., "std::vector" rather than "vector".</p></td></tr>
+
+<tr><td colspan="2"><b>"diff" format</b></td></tr>
+<tr><td>Example:</td><td><tt>"no known conversion %diff{from | to | }1,2"</tt></td></tr>
+<tr><td>Class:</td><td>QualType</td></tr>
+<tr><td>Description</td><td><p>This formatter takes two QualTypes and attempts to print a template difference between the two.  If tree printing is off, the text inside the braces before the pipe is printed, with the formatted text replacing the $.  If tree printing is on, the text after the pipe is printed and a type tree is printed after the diagnostic message.
+</p></td></tr>
     
 </table>
 
@@ -412,7 +412,7 @@ it is rendered.
 </p>
 
 <!-- ==================================================== -->
-<h4 id="code-modification-hints">Code Modification Hints</h4>
+<h4 id="fix-it-hints">Fix-It Hints</h4>
 <!-- ==================================================== -->
 
 <p>In some cases, the front end emits diagnostics when it is clear
@@ -422,49 +422,59 @@ deprecated syntax that is easily rewritten into a more modern form.
 Clang tries very hard to emit the diagnostic and recover gracefully
 in these and other cases.</p>
 
-<p>However, for these cases where the fix is obvious, the diagnostic 
-can be annotated with a code
-modification "hint" that describes how to change the code referenced
-by the diagnostic to fix the problem. For example, it might add the
-missing semicolon at the end of the statement or rewrite the use of a
-deprecated construct into something more palatable. Here is one such
-example C++ front end, where we warn about the right-shift operator
-changing meaning from C++98 to C++0x:</p>
+<p>However, for these cases where the fix is obvious, the diagnostic
+can be annotated with a hint (referred to as a "fix-it hint") that
+describes how to change the code referenced by the diagnostic to fix
+the problem. For example, it might add the missing semicolon at the
+end of the statement or rewrite the use of a deprecated construct
+into something more palatable. Here is one such example from the C++
+front end, where we warn about the right-shift operator changing
+meaning from C++98 to C++11:</p>
 
 <pre>
-test.cpp:3:7: warning: use of right-shift operator ('&gt;&gt;') in template argument will require parentheses in C++0x
+test.cpp:3:7: warning: use of right-shift operator ('&gt;&gt;') in template argument will require parentheses in C++11
 A&lt;100 &gt;&gt; 2&gt; *a;
       ^
   (       )
 </pre>
 
-<p>Here, the code modification hint is suggesting that parentheses be
-added, and showing exactly where those parentheses would be inserted
-into the source code. The code modification hints themselves describe
-what changes to make to the source code in an abstract manner, which
-the text diagnostic printer renders as a line of "insertions" below
-the caret line. <a href="#DiagnosticClient">Other diagnostic
-clients</a> might choose to render the code differently (e.g., as
-markup inline) or even give the user the ability to automatically fix
-the problem.</p>
+<p>Here, the fix-it hint is suggesting that parentheses be added,
+and showing exactly where those parentheses would be inserted into the
+source code. The fix-it hints themselves describe what changes to make
+to the source code in an abstract manner, which the text diagnostic
+printer renders as a line of "insertions" below the caret line. <a
+href="#DiagnosticClient">Other diagnostic clients</a> might choose
+to render the code differently (e.g., as markup inline) or even give
+the user the ability to automatically fix the problem.</p>
 
-<p>All code modification hints are described by the
-<code>CodeModificationHint</code> class, instances of which should be
-attached to the diagnostic using the &lt;&lt; operator in the same way
-that highlighted source ranges and arguments are passed to the
-diagnostic. Code modification hints can be created with one of three
-constructors:</p>
+<p>Fix-it hints on errors and warnings need to obey these rules:</p>
+
+<ul>
+<li>Since they are automatically applied if <code>-Xclang -fixit</code>
+is passed to the driver, they should only be used when it's very likely they
+match the user's intent.</li>
+<li>Clang must recover from errors as if the fix-it had been applied.</li>
+</ul>
+
+<p>If a fix-it can't obey these rules, put the fix-it on a note. Fix-its on
+notes are not applied automatically.</p>
+
+<p>All fix-it hints are described by the <code>FixItHint</code> class,
+instances of which should be attached to the diagnostic using the
+&lt;&lt; operator in the same way that highlighted source ranges and
+arguments are passed to the diagnostic. Fix-it hints can be created
+with one of three constructors:</p>
 
 <dl>
-  <dt><code>CodeModificationHint::CreateInsertion(Loc, Code)</code></dt>
+  <dt><code>FixItHint::CreateInsertion(Loc, Code)</code></dt>
   <dd>Specifies that the given <code>Code</code> (a string) should be inserted
   before the source location <code>Loc</code>.</dd>
 
-  <dt><code>CodeModificationHint::CreateRemoval(Range)</code></dt>
+  <dt><code>FixItHint::CreateRemoval(Range)</code></dt>
   <dd>Specifies that the code in the given source <code>Range</code>
   should be removed.</dd>
 
-  <dt><code>CodeModificationHint::CreateReplacement(Range, Code)</code></dt>
+  <dt><code>FixItHint::CreateReplacement(Range, Code)</code></dt>
   <dd>Specifies that the code in the given source <code>Range</code>
   should be removed, and replaced with the given <code>Code</code> string.</dd>
 </dl>
@@ -579,7 +589,7 @@ the <code>CharSourceRange</code> class.</p>
 <!-- ======================================================================= -->
 
 <p>The clang Driver and library are documented <a
-href="DriverInternals.html">here<a>.<p>
+href="DriverInternals.html">here</a>.<p>
 
 <!-- ======================================================================= -->
 <h2 id="pch">Precompiled Headers</h2>
@@ -689,7 +699,6 @@ lexer/preprocessor system on a per-token basis:
   <li><b>NeedsCleaning</b> - This flag is set if the original spelling for the
       token includes a trigraph or escaped newline.  Since this is uncommon,
       many pieces of code can fast-path on tokens that did not need cleaning.
-      </p>
    </ol>
 </li>
 </ul>
@@ -909,13 +918,13 @@ on the annotated lines.  In this example, we expect to get:</p>
 <pre>
 <b>test.c:6:1: error: indirection requires pointer operand ('foo' invalid)</b>
 *X; // error
-<font color="blue">^~</font>
+<span style="color:blue">^~</span>
 <b>test.c:7:1: error: indirection requires pointer operand ('foo' invalid)</b>
 **Y; // error
-<font color="blue">^~~</font>
+<span style="color:blue">^~~</span>
 <b>test.c:8:1: error: indirection requires pointer operand ('foo' invalid)</b>
 **Z; // error
-<font color="blue">^~~</font>
+<span style="color:blue">^~~</span>
 </pre>
 
 <p>While this example is somewhat silly, it illustrates the point: we want to
@@ -932,7 +941,7 @@ typedef for foo.
 <p>Representing types like this is great for diagnostics, because the
 user-specified type is always immediately available.  There are two problems
 with this: first, various semantic checks need to make judgements about the
-<em>actual structure</em> of a type, ignoring typdefs.  Second, we need an
+<em>actual structure</em> of a type, ignoring typedefs.  Second, we need an
 efficient way to query whether two types are structurally identical to each
 other, ignoring typedefs.  The solution to both of these problems is the idea of
 canonical types.</p>
@@ -1215,8 +1224,8 @@ void g();
 void g(int);
 </pre>
 <p>the <code>DeclContext::lookup</code> operation will return
-  an <code>OverloadedFunctionDecl</code> that contains both
-  declarations of "g". Clients that perform semantic analysis on a
+  a <code>DeclContext::lookup_result</code> that contains a range of iterators 
+  over declarations of "g". Clients that perform semantic analysis on a
   program that is not concerned with the actual source code will
   primarily use this semantics-centric view.</p>
 
@@ -1327,7 +1336,7 @@ extern "C" {
 
 <p>The transparent <code>DeclContexts</code> are:</p>
 <ul>
-  <li>Enumerations (but not C++0x "scoped enumerations"):
+  <li>Enumerations (but not C++11 "scoped enumerations"):
     <pre>
 enum Color { 
   Red, 
@@ -1358,7 +1367,7 @@ LookupTable LT;
 LT.Vector = 0; // Okay: finds Vector inside the unnamed union
     </pre>
   </li>
-  <li>C++0x inline namespaces:
+  <li>C++11 inline namespaces:
 <pre>
 namespace mylib {
   inline namespace debug {
@@ -1398,8 +1407,8 @@ namespace N {
   nodes in Snippet #1, each of which is a declaration context that
   contains a single declaration of "f". However, the semantics-centric
   view provided by name lookup into the namespace <code>N</code> for
-  "f" will return an <code>OverloadedFunctionDecl</code> that contains
-  both declarations of "f".</p>
+  "f" will return a <code>DeclContext::lookup_result</code> that contains
+  a range of iterators over declarations of "f".</p>
 
 <p><code>DeclContext</code> manages multiply-defined declaration
   contexts internally. The
@@ -1696,7 +1705,10 @@ interacts with constant evaluation:</p>
     any evaluatable subexpression to be accepted as an integer constant
     expression.</li>
 <li><b><tt>__builtin_constant_p</tt></b>: This returns true (as a integer
-    constant expression) if the operand is any evaluatable constant.  As a
+    constant expression) if the operand evaluates to either a numeric value
+    (that is, not a pointer cast to integral type) of integral, enumeration,
+    floating or complex type, or if it evaluates to the address of the first
+    character of a string literal (possibly cast to some other type). As a
     special case, if <tt>__builtin_constant_p</tt> is the (potentially
     parenthesized) condition of a conditional operator expression ("?:"), only
     the true side of the conditional operator is considered, and it is evaluated
@@ -1711,7 +1723,9 @@ interacts with constant evaluation:</p>
     floating-point literal.</li>
 <li><b><tt>__builtin_abs,copysign,..</tt></b>: These are constant folded as
     general constant expressions.</li>
-<li><b><tt>__builtin_strlen</tt></b> and <b><tt>strlen</tt></b>: These are constant folded as integer constant expressions if the argument is a string literal.</li>
+<li><b><tt>__builtin_strlen</tt></b> and <b><tt>strlen</tt></b>: These are
+    constant folded as integer constant expressions if the argument is a string
+    literal.</li>
 </ul>
 
 
@@ -1725,7 +1739,7 @@ interacts with constant evaluation:</p>
 
 <p>To add an attribute, you'll have to add it to the list of attributes, add it
 to the parsing phase, and look for it in the AST scan.
-<a href="http://llvm.org/viewvc/llvm-project?view=rev&revision=124217">r124217</a>
+<a href="http://llvm.org/viewvc/llvm-project?view=rev&amp;revision=124217">r124217</a>
 has a good example of adding a warning attribute.</p>
 
 <p>(Beware that this hasn't been reviewed/fixed by the people who designed the
@@ -1740,7 +1754,7 @@ to subsequent declarations of the same name.</p>
 
 <p><tt>Spellings</tt> lists the strings that can appear in
 <tt>__attribute__((here))</tt> or <tt>[[here]]</tt>.  All such strings
-will be synonymous.  If you want to allow the <tt>[[]]</tt> C++0x
+will be synonymous.  If you want to allow the <tt>[[]]</tt> C++11
 syntax, you have to define a list of <tt>Namespaces</tt>, which will
 let users write <tt>[[namespace:spelling]]</tt>. Using the empty
 string for a namespace will allow users to write just the spelling
@@ -1754,18 +1768,6 @@ can appertain (roughly, attach).</p>
 then <tt>__attribute__((myattribute("Hello", 3)))</tt> will be a valid use.</p>
 
 <h4>Boilerplate</h4>
-
-<p>Add an element to the <tt>AttributeList::Kind</tt> enum in <a
-href="http://llvm.org/viewvc/llvm-project/cfe/trunk/include/clang/Sema/AttributeList.h?view=markup">include/clang/Sema/AttributeList.h</a>
-named <tt>AT_lower_with_underscores</tt>.  That is, a CamelCased
-<tt>AttributeName</tt> in <tt>Attr.td</tt> name should become
-<tt>AT_attribute_name</tt>.</p>
-
-<p>Add a case to the <tt>StringSwitch</tt> in <tt>AttributeList::getKind()</tt>
-in <a
-href="http://llvm.org/viewvc/llvm-project/cfe/trunk/lib/Sema/AttributeList.cpp?view=markup">lib/Sema/AttributeList.cpp</a>
-for each spelling of your attribute.  Less common attributes should come toward
-the end of that list.</p>
 
 <p>Write a new <tt>HandleYourAttr()</tt> function in <a
 href="http://llvm.org/viewvc/llvm-project/cfe/trunk/lib/Sema/SemaDeclAttr.cpp?view=markup">lib/Sema/SemaDeclAttr.cpp</a>,
@@ -1787,6 +1789,228 @@ Check for the attribute's presence using <tt>Decl::getAttr&lt;YourAttr>()</tt>.<
 
 <p>Update the <a href="LanguageExtensions.html">Clang Language Extensions</a>
 document to describe your new attribute.</p>
+
+<!-- ======================================================================= -->
+<h3 id="AddingExprStmt">How to add an expression or statement</h3>
+<!-- ======================================================================= -->
+
+<p>Expressions and statements are one of the most fundamental constructs within a
+compiler, because they interact with many different parts of the AST,
+semantic analysis, and IR generation. Therefore, adding a new
+expression or statement kind into Clang requires some care. The following list
+details the various places in Clang where an expression or statement needs to be
+introduced, along with patterns to follow to ensure that the new
+expression or statement works well across all of the C languages. We
+focus on expressions, but statements are similar.</p>
+
+<ol>
+  <li>Introduce parsing actions into the parser. Recursive-descent
+  parsing is mostly self-explanatory, but there are a few things that
+  are worth keeping in mind:
+  <ul>
+    <li>Keep as much source location information as possible! You'll
+    want it later to produce great diagnostics and support Clang's
+    various features that map between source code and the AST.</li>
+   <li>Write tests for all of the "bad" parsing cases, to make sure
+    your recovery is good. If you have matched delimiters (e.g.,
+    parentheses, square brackets, etc.), use
+    <tt>Parser::BalancedDelimiterTracker</tt> to give nice diagnostics when
+    things go wrong.</li>
+  </ul>
+  </li>
+
+  <li>Introduce semantic analysis actions into <tt>Sema</tt>. Semantic
+  analysis should always involve two functions: an <tt>ActOnXXX</tt>
+  function that will be called directly from the parser, and a
+  <tt>BuildXXX</tt> function that performs the actual semantic
+  analysis and will (eventually!) build the AST node. It's fairly
+  common for the <tt>ActOnCXX</tt> function to do very little (often
+  just some minor translation from the parser's representation to
+  <tt>Sema</tt>'s representation of the same thing), but the separation
+  is still important: C++ template instantiation, for example,
+  should always call the <tt>BuildXXX</tt> variant. Several notes on
+  semantic analysis before we get into construction of the AST:
+  <ul>
+    <li>Your expression probably involves some types and some
+    subexpressions. Make sure to fully check that those types, and the
+    types of those subexpressions, meet your expectations. Add
+    implicit conversions where necessary to make sure that all of the
+    types line up exactly the way you want them. Write extensive tests
+    to check that you're getting good diagnostics for mistakes and
+    that you can use various forms of subexpressions with your
+    expression.</li>
+   <li>When type-checking a type or subexpression, make sure to first
+    check whether the type is "dependent"
+    (<tt>Type::isDependentType()</tt>) or whether a subexpression is
+    type-dependent (<tt>Expr::isTypeDependent()</tt>). If any of these
+    return true, then you're inside a template and you can't do much
+    type-checking now. That's normal, and your AST node (when you get
+    there) will have to deal with this case. At this point, you can
+    write tests that use your expression within templates, but don't
+    try to instantiate the templates.</li>
+   <li>For each subexpression, be sure to call
+    <tt>Sema::CheckPlaceholderExpr()</tt> to deal with "weird"
+    expressions that don't behave well as subexpressions. Then,
+    determine whether you need to perform
+    lvalue-to-rvalue conversions
+    (<tt>Sema::DefaultLvalueConversion</tt>e) or
+    the usual unary conversions
+    (<tt>Sema::UsualUnaryConversions</tt>), for places where the
+    subexpression is producing a value you intend to use.</li>
+    <li>Your <tt>BuildXXX</tt> function will probably just return
+    <tt>ExprError()</tt> at this point, since you don't have an AST.
+    That's perfectly fine, and shouldn't impact your testing.</li>
+  </ul>
+  </li>
+
+  <li>Introduce an AST node for your new expression. This starts with
+  declaring the node in <tt>include/Basic/StmtNodes.td</tt> and
+  creating a new class for your expression in the appropriate
+  <tt>include/AST/Expr*.h</tt> header. It's best to look at the class
+  for a similar expression to get ideas, and there are some specific
+  things to watch for:
+  <ul>
+    <li>If you need to allocate memory, use the <tt>ASTContext</tt>
+    allocator to allocate memory. Never use raw <tt>malloc</tt> or
+    <tt>new</tt>, and never hold any resources in an AST node, because
+    the destructor of an AST node is never called.</li>
+
+    <li>Make sure that <tt>getSourceRange()</tt> covers the exact
+    source range of your expression. This is needed for diagnostics
+    and for IDE support.</li>
+
+    <li>Make sure that <tt>children()</tt> visits all of the
+    subexpressions. This is important for a number of features (e.g., IDE
+    support, C++ variadic templates). If you have sub-types, you'll
+    also need to visit those sub-types in the
+    <tt>RecursiveASTVisitor</tt>.</li>
+
+    <li>Add printing support (<tt>StmtPrinter.cpp</tt>) and dumping
+    support (<tt>StmtDumper.cpp</tt>) for your expression.</li>
+
+    <li>Add profiling support (<tt>StmtProfile.cpp</tt>) for your AST
+    node, noting the distinguishing (non-source location)
+    characteristics of an instance of your expression. Omitting this
+    step will lead to hard-to-diagnose failures regarding matching of
+    template declarations.</li>
+  </ul>
+  </li>
+
+  <li>Teach semantic analysis to build your AST node! At this point,
+  you can wire up your <tt>Sema::BuildXXX</tt> function to actually
+  create your AST. A few things to check at this point:
+  <ul>
+    <li>If your expression can construct a new C++ class or return a
+    new Objective-C object, be sure to update and then call
+    <tt>Sema::MaybeBindToTemporary</tt> for your just-created AST node
+    to be sure that the object gets properly destructed. An easy way
+    to test this is to return a C++ class with a private destructor:
+    semantic analysis should flag an error here with the attempt to
+    call the destructor.</li>
+   <li>Inspect the generated AST by printing it using <tt>clang -cc1
+    -ast-print</tt>, to make sure you're capturing all of the
+    important information about how the AST was written.</li>
+   <li>Inspect the generated AST under <tt>clang -cc1 -ast-dump</tt>
+    to verify that all of the types in the generated AST line up the
+    way you want them. Remember that clients of the AST should never
+    have to "think" to understand what's going on. For example, all
+    implicit conversions should show up explicitly in the AST.</li>
+    <li>Write tests that use your expression as a subexpression of
+    other, well-known expressions. Can you call a function using your
+    expression as an argument? Can you use the ternary operator?</li>
+  </ul>
+  </li>
+
+  <li>Teach code generation to create IR to your AST node. This step
+  is the first (and only) that requires knowledge of LLVM IR. There
+  are several things to keep in mind:
+  <ul>
+    <li>Code generation is separated into scalar/aggregate/complex and
+    lvalue/rvalue paths, depending on what kind of result your
+    expression produces. On occasion, this requires some careful
+    factoring of code to avoid duplication.</li>
+
+    <li><tt>CodeGenFunction</tt> contains functions
+    <tt>ConvertType</tt> and <tt>ConvertTypeForMem</tt> that convert
+    Clang's types (<tt>clang::Type*</tt> or <tt>clang::QualType</tt>)
+    to LLVM types.
+    Use the former for values, and the later for memory locations:
+    test with the C++ "bool" type to check this. If you find
+    that you are having to use LLVM bitcasts to make
+    the subexpressions of your expression have the type that your
+    expression expects, STOP! Go fix semantic analysis and the AST so
+    that you don't need these bitcasts.</li>
+    
+    <li>The <tt>CodeGenFunction</tt> class has a number of helper
+    functions to make certain operations easy, such as generating code
+    to produce an lvalue or an rvalue, or to initialize a memory
+    location with a given value. Prefer to use these functions rather
+    than directly writing loads and stores, because these functions
+    take care of some of the tricky details for you (e.g., for
+    exceptions).</li>
+
+    <li>If your expression requires some special behavior in the event
+    of an exception, look at the <tt>push*Cleanup</tt> functions in
+    <tt>CodeGenFunction</tt> to introduce a cleanup. You shouldn't
+    have to deal with exception-handling directly.</li>
+
+    <li>Testing is extremely important in IR generation. Use <tt>clang
+    -cc1 -emit-llvm</tt> and <a
+    href="http://llvm.org/cmds/FileCheck.html">FileCheck</a> to verify
+    that you're generating the right IR.</li>
+  </ul>
+  </li>
+
+  <li>Teach template instantiation how to cope with your AST
+  node, which requires some fairly simple code:
+  <ul>
+    <li>Make sure that your expression's constructor properly
+    computes the flags for type dependence (i.e., the type your
+    expression produces can change from one instantiation to the
+    next), value dependence (i.e., the constant value your expression
+    produces can change from one instantiation to the next),
+    instantiation dependence (i.e., a template parameter occurs
+    anywhere in your expression), and whether your expression contains
+    a parameter pack (for variadic templates). Often, computing these
+    flags just means combining the results from the various types and
+    subexpressions.</li>
+    
+    <li>Add <tt>TransformXXX</tt> and <tt>RebuildXXX</tt> functions to
+    the
+    <tt>TreeTransform</tt> class template in <tt>Sema</tt>.
+    <tt>TransformXXX</tt> should (recursively) transform all of the
+    subexpressions and types
+    within your expression, using <tt>getDerived().TransformYYY</tt>.
+    If all of the subexpressions and types transform without error, it
+    will then call the <tt>RebuildXXX</tt> function, which will in
+    turn call <tt>getSema().BuildXXX</tt> to perform semantic analysis
+    and build your expression.</li>
+    
+    <li>To test template instantiation, take those tests you wrote to
+    make sure that you were type checking with type-dependent
+    expressions and dependent types (from step #2) and instantiate
+    those templates with various types, some of which type-check and
+    some that don't, and test the error messages in each case.</li>
+  </ul>
+  </li>
+  
+  <li>There are some "extras" that make other features work better.
+  It's worth handling these extras to give your expression complete
+  integration into Clang:
+  <ul>
+    <li>Add code completion support for your expression in
+    <tt>SemaCodeComplete.cpp</tt>.</li>
+    
+    <li>If your expression has types in it, or has any "interesting"
+    features other than subexpressions, extend libclang's
+    <tt>CursorVisitor</tt> to provide proper visitation for your
+    expression, enabling various IDE features such as syntax
+    highlighting, cross-referencing, and so on. The
+    <tt>c-index-test</tt> helper program can be used to test these
+    features.</li>
+  </ul>
+  </li>
+</ol>
 
 </div>
 </body>

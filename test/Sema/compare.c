@@ -312,3 +312,31 @@ int rdar8511238() {
     return 0;
   return 20;
 }
+
+// PR10336
+int test9(int sv, unsigned uv, long slv) {
+  return sv == (uv ^= slv); // expected-warning {{comparison of integers of different signs: 'int' and 'unsigned int'}}
+}
+
+void test10(void) {
+  int si;
+  unsigned int ui;
+  long sl;
+
+  _Bool b;
+  b = (si == (ui = sl)); // expected-warning {{comparison of integers of different signs: 'int' and 'unsigned int'}}
+  b = (si == (ui = sl&15));
+}
+
+// PR11572
+struct test11S { unsigned x : 30; };
+int test11(unsigned y, struct test11S *p) {
+  return y > (p->x >> 24); // no-warning
+}
+
+typedef char one_char[1];
+typedef char two_chars[2];
+
+void test12(unsigned a) {
+  if (0 && -1 > a) { }
+}

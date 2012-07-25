@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify %s -std=c++0x
+// RUN: %clang_cc1 -fsyntax-only -verify %s -std=c++11
 
 template<typename T>
 struct only {
@@ -8,7 +8,7 @@ struct only {
 
 template<typename ...T>
 void f(T ...t) {
-  auto x(t...); // expected-error {{requires an initializer}} expected-error {{contains multiple expressions}}
+  auto x(t...); // expected-error {{is empty}} expected-error {{contains multiple expressions}}
   only<int> check = x;
 }
 

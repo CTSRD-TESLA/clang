@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -analyze -analyzer-checker=core.experimental -analyzer-checker=DeadStores -verify %s
+// RUN: %clang_cc1 -analyze -analyzer-checker=experimental.core -analyzer-checker=deadcode.DeadStores -verify %s
 //
 // This test exercises the live variables analysis (LiveVariables.cpp).
 // The case originally identified a non-termination bug.
@@ -10,7 +10,7 @@ typedef struct _NSZone NSZone;
 @interface NSObject <NSObject> {} @end
 extern id NSAllocateObject(Class aClass, NSUInteger extraBytes, NSZone *zone);
 @class NSArray;
-@class NSMutableArray, NSIndexSet, NSView, NSPredicate, NSString, NSViewAnimation, NSTimer;
+@class NSMutableArray, NSIndexSet, NSView, NSPredicate, NSString, NSViewAnimation, NSTimer; // expected-note{{forward declaration of class here}}
 @interface FooBazController : NSObject {}
 @end
 typedef struct {} TazVersion;

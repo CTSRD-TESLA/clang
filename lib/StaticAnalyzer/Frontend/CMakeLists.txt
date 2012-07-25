@@ -1,7 +1,5 @@
 set(LLVM_NO_RTTI 1)
 
-set(LLVM_USED_LIBS clangBasic clangLex clangAST clangFrontend clangRewrite)
-
 include_directories( ${CMAKE_CURRENT_BINARY_DIR}/../Checkers )
 
 add_clang_library(clangStaticAnalyzerFrontend
@@ -15,6 +13,16 @@ add_dependencies(clangStaticAnalyzerFrontend
   clangStaticAnalyzerCore
   ClangAttrClasses
   ClangAttrList
+  ClangCommentNodes
   ClangDeclNodes
   ClangStmtNodes
+  )
+
+target_link_libraries(clangStaticAnalyzerFrontend
+  clangBasic
+  clangLex
+  clangAST
+  clangFrontend
+  clangRewrite
+  clangStaticAnalyzerCheckers
   )

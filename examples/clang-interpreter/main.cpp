@@ -18,16 +18,15 @@
 #include "clang/Frontend/TextDiagnosticPrinter.h"
 
 #include "llvm/Module.h"
-#include "llvm/Config/config.h"
 #include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/SmallString.h"
-#include "llvm/Config/config.h"
+#include "llvm/ExecutionEngine/JIT.h"
 #include "llvm/ExecutionEngine/ExecutionEngine.h"
 #include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Host.h"
 #include "llvm/Support/Path.h"
-#include "llvm/Target/TargetSelect.h"
+#include "llvm/Support/TargetSelect.h"
 using namespace clang;
 using namespace clang::driver;
 
@@ -47,7 +46,7 @@ static int Execute(llvm::Module *Mod, char * const *envp) {
   llvm::InitializeNativeTarget();
 
   std::string Error;
-  llvm::OwningPtr<llvm::ExecutionEngine> EE(
+  OwningPtr<llvm::ExecutionEngine> EE(
     llvm::ExecutionEngine::createJIT(Mod, &Error));
   if (!EE) {
     llvm::errs() << "unable to make execution engine: " << Error << "\n";
@@ -73,11 +72,10 @@ int main(int argc, const char **argv, char * const *envp) {
   TextDiagnosticPrinter *DiagClient =
     new TextDiagnosticPrinter(llvm::errs(), DiagnosticOptions());
 
-  llvm::IntrusiveRefCntPtr<DiagnosticIDs> DiagID(new DiagnosticIDs());
-  Diagnostic Diags(DiagID, DiagClient);
-  Driver TheDriver(Path.str(), llvm::sys::getHostTriple(),
-                   "a.out", /*IsProduction=*/false, /*CXXIsProduction=*/false,
-                   Diags);
+  IntrusiveRefCntPtr<DiagnosticIDs> DiagID(new DiagnosticIDs());
+  DiagnosticsEngine Diags(DiagID, DiagClient);
+  Driver TheDriver(Path.str(), llvm::sys::getDefaultTargetTriple(),
+                   "a.out", /*IsProduction=*/false, Diags);
   TheDriver.setTitle("clang interpreter");
 
   // FIXME: This is a hack to try to force the driver to do something we can
@@ -85,8 +83,7 @@ int main(int argc, const char **argv, char * const *envp) {
   // (basically, exactly one input, and the operation mode is hard wired).
   llvm::SmallVector<const char *, 16> Args(argv, argv + argc);
   Args.push_back("-fsyntax-only");
-  llvm::OwningPtr<Compilation> C(TheDriver.BuildCompilation(Args.size(),
-                                                            Args.data()));
+  OwningPtr<Compilation> C(TheDriver.BuildCompilation(Args));
   if (!C)
     return 0;
 
@@ -95,8 +92,8 @@ int main(int argc, const char **argv, char * const *envp) {
   // We expect to get back exactly one command job, if we didn't something
   // failed. Extract that job from the compilation.
   const driver::JobList &Jobs = C->getJobs();
-  if (Jobs.size() != 1 || !isa<driver::Command>(Jobs.begin())) {
-    llvm::SmallString<256> Msg;
+  if (Jobs.size() != 1 || !isa<driver::Command>(*Jobs.begin())) {
+    SmallString<256> Msg;
     llvm::raw_svector_ostream OS(Msg);
     C->PrintJob(OS, C->getJobs(), "; ", true);
     Diags.Report(diag::err_fe_expected_compiler_job) << OS.str();
@@ -111,7 +108,7 @@ int main(int argc, const char **argv, char * const *envp) {
 
   // Initialize a compiler invocation object from the clang (-cc1) arguments.
   const driver::ArgStringList &CCArgs = Cmd->getArguments();
-  llvm::OwningPtr<CompilerInvocation> CI(new CompilerInvocation);
+  OwningPtr<CompilerInvocation> CI(new CompilerInvocation);
   CompilerInvocation::CreateFromArgs(*CI,
                                      const_cast<const char **>(CCArgs.data()),
                                      const_cast<const char **>(CCArgs.data()) +
@@ -143,7 +140,7 @@ int main(int argc, const char **argv, char * const *envp) {
       CompilerInvocation::GetResourcesPath(argv[0], MainAddr);
 
   // Create and execute the frontend to generate an LLVM bitcode module.
-  llvm::OwningPtr<CodeGenAction> Act(new EmitLLVMOnlyAction());
+  OwningPtr<CodeGenAction> Act(new EmitLLVMOnlyAction());
   if (!Clang.ExecuteAction(*Act))
     return 1;
 

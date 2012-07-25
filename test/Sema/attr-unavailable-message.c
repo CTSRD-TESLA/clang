@@ -16,3 +16,34 @@ void test_foo() {
 }
 
 char test2[__has_feature(attribute_unavailable_with_message) ? 1 : -1];
+
+// rdar://9623855
+void unavail(void)  __attribute__((__unavailable__));
+void unavail(void) {
+  // No complains inside an unavailable function.
+  int ir = foo(1);
+  double dr = dfoo(1.0);
+  void (*fp)() = &bar;
+  double (*fp4)(double) = dfoo;
+}
+
+// rdar://10201690
+enum foo {
+    a = 1,
+    b __attribute__((deprecated())) = 2, // expected-note {{declared here}}
+    c = 3
+}__attribute__((deprecated()));  
+
+enum fee { // expected-note {{declaration has been explicitly marked unavailable here}}
+    r = 1, // expected-note {{declaration has been explicitly marked unavailable here}}
+    s = 2,
+    t = 3
+}__attribute__((unavailable()));  
+
+enum fee f() { // expected-error {{'fee' is unavailable}}
+    int i = a; // expected-warning {{'a' is deprecated}}
+
+    i = b; // expected-warning {{'b' is deprecated}}
+
+    return r; // expected-error {{'r' is unavailable}}
+}

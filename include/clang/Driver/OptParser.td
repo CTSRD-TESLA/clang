@@ -78,12 +78,15 @@ def RenderSeparate : OptionFlag;
 def Unsupported : OptionFlag;
 
 // HelpHidden - The option should not be displayed in --help, even if it has
-// help text. Clients *can* use this in conjuction with the OptTable::PrintHelp
+// help text. Clients *can* use this in conjunction with the OptTable::PrintHelp
 // arguments to implement hidden help groups.
 def HelpHidden : OptionFlag;
 
 // NoForward - The option should not be implicitly forwarded to other tools.
 def NoForward : OptionFlag;
+
+// CC1Option - This option should be accepted by clang -cc1.
+def CC1Option : OptionFlag;
 
 // Define the option group class.
 
@@ -134,5 +137,5 @@ class MetaVarName<string name> { string MetaVarName = name; }
 
 // FIXME: Have generator validate that these appear in correct position (and
 // aren't duplicated).
-def INPUT : Option<"<input>", KIND_INPUT>, Flags<[DriverOption]>;
+def INPUT : Option<"<input>", KIND_INPUT>, Flags<[DriverOption,CC1Option]>;
 def UNKNOWN : Option<"<unknown>", KIND_UNKNOWN>;

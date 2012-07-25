@@ -1,8 +1,8 @@
-// RUN: %clang_cc1 -w -fblocks -triple i386-pc-linux-gnu -emit-llvm -o %t %s
+// RUN: %clang_cc1 -w -fblocks -triple i386-pc-linux-gnu -target-cpu pentium4 -emit-llvm -o %t %s
 // RUN: FileCheck < %t %s
 
 // CHECK: define void @f56(
-// CHECK: i8 signext %a0, %struct.s56_0* byval %a1,
+// CHECK: i8 signext %a0, %struct.s56_0* byval align 4 %a1,
 // CHECK: x86_mmx %a2.coerce, %struct.s56_1* byval align 4,
 // CHECK: <1 x double> %a4, %struct.s56_2* byval align 4,
 // CHECK: <4 x i32> %a6, %struct.s56_3* byval align 4,
@@ -11,7 +11,7 @@
 // CHECK: <4 x double> %a12, %struct.s56_6* byval align 4)
 
 // CHECK: call void (i32, ...)* @f56_0(i32 1,
-// CHECK: i32 %{{.*}}, %struct.s56_0* byval %{{[^ ]*}},
+// CHECK: i32 %{{.*}}, %struct.s56_0* byval align 4 %{{[^ ]*}},
 // CHECK: x86_mmx %{{[^ ]*}}, %struct.s56_1* byval align 4 %{{[^ ]*}},
 // CHECK: <1 x double> %{{[^ ]*}}, %struct.s56_2* byval align 4 %{{[^ ]*}},
 // CHECK: <4 x i32> %{{[^ ]*}}, %struct.s56_3* byval align 4 %{{[^ ]*}},

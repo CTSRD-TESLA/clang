@@ -15,6 +15,7 @@
 #define LLVM_CLANG_CXSTRING_H
 
 #include "clang-c/Index.h"
+#include "clang/Basic/LLVM.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/SmallString.h"
 
@@ -22,7 +23,7 @@ namespace clang {
 namespace cxstring {
   
 struct CXStringBuf {
-  llvm::SmallString<128> Data;
+  SmallString<128> Data;
   CXTranslationUnit TU;
   CXStringBuf(CXTranslationUnit tu) : TU(tu) {}
 };
@@ -31,7 +32,7 @@ struct CXStringBuf {
 CXString createCXString(const char *String, bool DupString = false);
 
 /// \brief Create a CXString object from a StringRef.
-CXString createCXString(llvm::StringRef String, bool DupString = true);
+CXString createCXString(StringRef String, bool DupString = true);
 
 /// \brief Create a CXString object that is backed by a string buffer.
 CXString createCXString(CXStringBuf *buf);
@@ -45,6 +46,9 @@ void disposeCXStringPool(void *pool);
 CXStringBuf *getCXStringBuf(CXTranslationUnit TU);
  
 void disposeCXStringBuf(CXStringBuf *buf);
+
+/// \brief Returns true if the CXString data is managed by a pool.
+bool isManagedByPool(CXString str);
 
 }
 }

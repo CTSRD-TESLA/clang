@@ -16,12 +16,25 @@ def test_kind_groups():
     assert CursorKind.UNEXPOSED_STMT.is_statement()
     assert CursorKind.INVALID_FILE.is_invalid()
 
+    assert CursorKind.TRANSLATION_UNIT.is_translation_unit()
+    assert not CursorKind.TYPE_REF.is_translation_unit()
+
+    assert CursorKind.PREPROCESSING_DIRECTIVE.is_preprocessing()
+    assert not CursorKind.TYPE_REF.is_preprocessing()
+
+    assert CursorKind.UNEXPOSED_DECL.is_unexposed()
+    assert not CursorKind.TYPE_REF.is_unexposed()
+
     for k in CursorKind.get_all_kinds():
         group = [n for n in ('is_declaration', 'is_reference', 'is_expression',
-                             'is_statement', 'is_invalid')
+                             'is_statement', 'is_invalid', 'is_attribute')
                  if getattr(k, n)()]
 
-        if k == CursorKind.TRANSLATION_UNIT:
+        if k in (   CursorKind.TRANSLATION_UNIT,
+                    CursorKind.MACRO_DEFINITION,
+                    CursorKind.MACRO_INSTANTIATION,
+                    CursorKind.INCLUSION_DIRECTIVE,
+                    CursorKind.PREPROCESSING_DIRECTIVE):
             assert len(group) == 0
         else:
             assert len(group) == 1

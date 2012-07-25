@@ -33,10 +33,10 @@ struct A {
 
 A make_A();
 
-bool operator==(A&, Z&); // expected-note 2{{candidate function}}
+bool operator==(A&, Z&); // expected-note 3{{candidate function}}
 
 void h(A a, const A ac, Z z) {
-  make_A() == z;
+  make_A() == z; // expected-warning{{equality comparison result unused}}
   a == z; // expected-error{{use of overloaded operator '==' is ambiguous}}
   ac == z; // expected-error{{invalid operands to binary expression ('const A' and 'Z')}}
 }
@@ -45,7 +45,7 @@ struct B {
   bool operator==(const B&) const;
 
   void test(Z z) {
-    make_A() == z;
+    make_A() == z; // expected-warning{{equality comparison result unused}}
   }
 };
 
@@ -68,7 +68,7 @@ struct E2 {
 };
 
 // C++ [over.match.oper]p3 - enum restriction.
-float& operator==(E1, E2); 
+float& operator==(E1, E2);  // expected-note{{candidate function}}
 
 void enum_test(Enum1 enum1, Enum2 enum2, E1 e1, E2 e2, Enum1 next_enum1) {
   float &f1 = (e1 == e2);
@@ -85,8 +85,8 @@ class pr5244_foo
   pr5244_foo(char);
 };
 
-bool operator==(const pr5244_foo& s1, const pr5244_foo& s2);
-bool operator==(char c, const pr5244_foo& s);
+bool operator==(const pr5244_foo& s1, const pr5244_foo& s2); // expected-note{{candidate function}}
+bool operator==(char c, const pr5244_foo& s); // expected-note{{candidate function}}
 
 enum pr5244_bar
 {
@@ -232,7 +232,7 @@ struct Arrow2 {
 void test_arrow(Arrow1 a1, Arrow2 a2, const Arrow2 a3) {
   int &i1 = a1->m;
   int &i2 = a2->m;
-  a3->m; // expected-error{{no viable overloaded 'operator->'; candidate is}}
+  a3->m; // expected-error{{no viable overloaded 'operator->'}}
 }
 
 struct CopyConBase {
@@ -383,4 +383,35 @@ void test_lookup_through_using() {
   using namespace N2::M;
   N::X2 x;
   x << 17;
+}
+
+namespace rdar9136502 {
+  struct X {
+    int i();
+    int i(int);
+  };
+
+  struct Y {
+    Y &operator<<(int);
+  };
+
+  void f(X x, Y y) {
+    y << x.i; // expected-error{{reference to non-static member function must be called}}
+  }
+}
+
+namespace rdar9222009 {
+class StringRef {
+  inline bool operator==(StringRef LHS, StringRef RHS) { // expected-error{{overloaded 'operator==' must be a binary operator (has 3 parameters)}}
+    return !(LHS == RHS); // expected-error{{invalid operands to binary expression ('rdar9222009::StringRef' and 'rdar9222009::StringRef')}}
+  }
+};
+
+}
+
+namespace PR11784 {
+  struct A { A& operator=(void (*x)()); };
+  void f();
+  void f(int);
+  void g() { A x; x = f; }
 }

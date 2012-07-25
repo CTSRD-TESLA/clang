@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -std=c++0x -fsyntax-only -verify %s
+// RUN: %clang_cc1 -std=c++11 -fsyntax-only -verify %s
 
 // PR5290
 int const f0();
@@ -16,3 +16,15 @@ void test_f2() {
   float &fr = f2(AC().a);
 }
 
+namespace pr10154 {
+  class A{
+      A(decltype(nullptr) param);
+  };
+}
+
+template<typename T> struct S {};
+template<typename T> auto f(T t) -> decltype(S<int>(t)) {
+  using U = decltype(S<int>(t));
+  using U = S<int>;
+  return S<int>(t);
+}

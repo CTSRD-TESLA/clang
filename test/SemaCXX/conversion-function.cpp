@@ -353,3 +353,53 @@ namespace PR8034 {
   };
   int x = C().operator int();
 }
+
+namespace PR9336 {
+  template<class T>
+  struct generic_list
+  {
+    template<class Container>
+    operator Container()
+    { 
+      Container ar;
+      T* i;
+      ar[0]=*i;
+      return ar;
+    }
+  };
+
+  template<class T>
+  struct array
+  {
+    T& operator[](int);
+    const T& operator[](int)const;
+  };
+
+  generic_list<generic_list<int> > l;
+  array<array<int> > a = l;
+}
+
+namespace PR8800 {
+  struct A;
+  struct C {
+    operator A&();
+  };
+  void f() {
+    C c;
+    A& a1(c);
+    A& a2 = c;
+    A& a3 = static_cast<A&>(c);
+    A& a4 = (A&)c;
+  }
+}
+
+namespace PR12712 {
+  struct A {};
+  struct B {
+    operator A();
+    operator A() const;
+  };
+  struct C : B {};
+
+  A f(const C c) { return c; }
+}

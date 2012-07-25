@@ -26,21 +26,21 @@ union s2 {
 
 int g0 = (int)(&(((union s2 *) 0)->f0.f0) - 0);
 
-// CHECK: @g1x = global {{%.}} { double 1.000000e+00{{[0]*}}, double 0.000000e+00{{[0]*}} }
+// CHECK: @g1x = global { double, double } { double 1.000000e+00{{[0]*}}, double 0.000000e+00{{[0]*}} }
 _Complex double g1x = 1.0f;
-// CHECK: @g1y = global {{%.}} { double 0.000000e+00{{[0]*}}, double 1.000000e+00{{[0]*}} }
+// CHECK: @g1y = global { double, double } { double 0.000000e+00{{[0]*}}, double 1.000000e+00{{[0]*}} }
 _Complex double g1y = 1.0fi;
-// CHECK: @g1 = global {{%.}} { i8 1, i8 10 }
+// CHECK: @g1 = global { i8, i8 } { i8 1, i8 10 }
 _Complex char g1 = (char) 1 + (char) 10 * 1i;
-// CHECK: @g2 = global %2 { i32 1, i32 10 }
+// CHECK: @g2 = global { i32, i32 } { i32 1, i32 10 }
 _Complex int g2 = 1 + 10i;
-// CHECK: @g3 = global {{%.}} { float 1.000000e+00{{[0]*}}, float 1.000000e+0{{[0]*}}1 }
+// CHECK: @g3 = global { float, float } { float 1.000000e+00{{[0]*}}, float 1.000000e+0{{[0]*}}1 }
 _Complex float g3 = 1.0 + 10.0i;
-// CHECK: @g4 = global {{%.}} { double 1.000000e+00{{[0]*}}, double 1.000000e+0{{[0]*}}1 }
+// CHECK: @g4 = global { double, double } { double 1.000000e+00{{[0]*}}, double 1.000000e+0{{[0]*}}1 }
 _Complex double g4 = 1.0 + 10.0i;
-// CHECK: @g5 = global %2 zeroinitializer
+// CHECK: @g5 = global { i32, i32 } zeroinitializer
 _Complex int g5 = (2 + 3i) == (5 + 7i);
-// CHECK: @g6 = global {{%.}} { double -1.100000e+0{{[0]*}}1, double 2.900000e+0{{[0]*}}1 }
+// CHECK: @g6 = global { double, double } { double -1.100000e+0{{[0]*}}1, double 2.900000e+0{{[0]*}}1 }
 _Complex double g6 = (2.0 + 3.0i) * (5.0 + 7.0i);
 // CHECK: @g7 = global i32 1
 int g7 = (2 + 3i) * (5 + 7i) == (-11 + 29i);
@@ -52,14 +52,14 @@ int g9 = (2 + 3i) * (5 + 7i) != (-11 + 29i);
 int g10 = (2.0 + 3.0i) * (5.0 + 7.0i) != (-11.0 + 29.0i);
 
 // PR5108
-// CHECK: @gv1 = global %4 <{ i32 0, i8 7 }>, align 1
+// CHECK: @gv1 = global %struct.anon <{ i32 0, i8 7 }>, align 1
 struct {
   unsigned long a;
   unsigned long b:3;
 } __attribute__((__packed__)) gv1  = { .a = 0x0, .b = 7,  };
 
 // PR5118
-// CHECK: @gv2 = global %5 <{ i8 1, i8* null }>, align 1 
+// CHECK: @gv2 = global %struct.anon.0 <{ i8 1, i8* null }>, align 1 
 struct {
   unsigned char a;
   char *b;
@@ -131,4 +131,16 @@ int g25() {
 // CHECK: @g27.x = internal global i8* bitcast (i8** @g27.x to i8*), align 4
 void g27() { // PR8073
   static void *x = &x;
+}
+
+void g28() {
+  typedef long long v1i64 __attribute((vector_size(8)));
+  typedef short v12i16 __attribute((vector_size(24)));
+  typedef long double v2f80 __attribute((vector_size(24)));
+  // CHECK: @g28.a = internal global <1 x i64> <i64 10>
+  // CHECK: @g28.b = internal global <12 x i16> <i16 0, i16 0, i16 0, i16 -32768, i16 16383, i16 0, i16 0, i16 0, i16 0, i16 -32768, i16 16384, i16 0>
+  // CHECK: @g28.c = internal global <2 x x86_fp80> <x86_fp80 0xK3FFF8000000000000000, x86_fp80 0xK40008000000000000000>, align 32
+  static v1i64 a = (v1i64)10LL;
+  static v12i16 b = (v2f80){1,2};
+  static v2f80 c = (v12i16){0,0,0,-32768,16383,0,0,0,0,-32768,16384,0};
 }

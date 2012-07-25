@@ -15,42 +15,49 @@
 #include "ClangSACheckers.h"
 #include "clang/StaticAnalyzer/Core/Checker.h"
 #include "clang/StaticAnalyzer/Core/CheckerManager.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/Calls.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/AST/ParentMap.h"
 #include "clang/Basic/TargetInfo.h"
+#include "llvm/ADT/SmallString.h"
 
 using namespace clang;
 using namespace ento;
 
 namespace {
 class CallAndMessageChecker
-  : public Checker< check::PreStmt<CallExpr>, check::PreObjCMessage > {
-  mutable llvm::OwningPtr<BugType> BT_call_null;
-  mutable llvm::OwningPtr<BugType> BT_call_undef;
-  mutable llvm::OwningPtr<BugType> BT_call_arg;
-  mutable llvm::OwningPtr<BugType> BT_msg_undef;
-  mutable llvm::OwningPtr<BugType> BT_msg_arg;
-  mutable llvm::OwningPtr<BugType> BT_msg_ret;
+  : public Checker< check::PreStmt<CallExpr>, check::PreObjCMessage,
+                    check::PreCall > {
+  mutable OwningPtr<BugType> BT_call_null;
+  mutable OwningPtr<BugType> BT_call_undef;
+  mutable OwningPtr<BugType> BT_call_arg;
+  mutable OwningPtr<BugType> BT_msg_undef;
+  mutable OwningPtr<BugType> BT_objc_prop_undef;
+  mutable OwningPtr<BugType> BT_objc_subscript_undef;
+  mutable OwningPtr<BugType> BT_msg_arg;
+  mutable OwningPtr<BugType> BT_msg_ret;
 public:
 
   void checkPreStmt(const CallExpr *CE, CheckerContext &C) const;
-  void checkPreObjCMessage(ObjCMessage msg, CheckerContext &C) const;
+  void checkPreObjCMessage(const ObjCMethodCall &msg, CheckerContext &C) const;
+  void checkPreCall(const CallEvent &Call, CheckerContext &C) const;
 
 private:
-  static void PreVisitProcessArgs(CheckerContext &C,CallOrObjCMessage callOrMsg,
-                             const char *BT_desc, llvm::OwningPtr<BugType> &BT);
-  static bool PreVisitProcessArg(CheckerContext &C, SVal V,SourceRange argRange,
-          const Expr *argEx, const char *BT_desc, llvm::OwningPtr<BugType> &BT);
+  static bool PreVisitProcessArg(CheckerContext &C, SVal V,
+                                 SourceRange argRange, const Expr *argEx,
+                                 bool IsFirstArgument, bool checkUninitFields,
+                                 const CallEvent &Call, OwningPtr<BugType> &BT);
 
   static void EmitBadCall(BugType *BT, CheckerContext &C, const CallExpr *CE);
-  void emitNilReceiverBug(CheckerContext &C, const ObjCMessage &msg,
+  void emitNilReceiverBug(CheckerContext &C, const ObjCMethodCall &msg,
                           ExplodedNode *N) const;
 
-  void HandleNilReceiver(CheckerContext &C, const GRState *state,
-                         ObjCMessage msg) const;
+  void HandleNilReceiver(CheckerContext &C,
+                         ProgramStateRef state,
+                         const ObjCMethodCall &msg) const;
 
-  static void LazyInit_BT(const char *desc, llvm::OwningPtr<BugType> &BT) {
+  static void LazyInit_BT(const char *desc, OwningPtr<BugType> &BT) {
     if (!BT)
       BT.reset(new BuiltinBug(desc));
   }
@@ -63,60 +70,80 @@ void CallAndMessageChecker::EmitBadCall(BugType *BT, CheckerContext &C,
   if (!N)
     return;
 
-  EnhancedBugReport *R = new EnhancedBugReport(*BT, BT->getName(), N);
-  R->addVisitorCreator(bugreporter::registerTrackNullOrUndefValue,
-                       bugreporter::GetCalleeExpr(N));
+  BugReport *R = new BugReport(*BT, BT->getName(), N);
+  R->addVisitor(bugreporter::getTrackNullOrUndefValueVisitor(N,
+                               bugreporter::GetCalleeExpr(N), R));
   C.EmitReport(R);
 }
 
-void CallAndMessageChecker::PreVisitProcessArgs(CheckerContext &C,
-                                                CallOrObjCMessage callOrMsg,
-                                                const char *BT_desc,
-                                                llvm::OwningPtr<BugType> &BT) {
-  for (unsigned i = 0, e = callOrMsg.getNumArgs(); i != e; ++i)
-    if (PreVisitProcessArg(C, callOrMsg.getArgSVal(i),
-                           callOrMsg.getArgSourceRange(i), callOrMsg.getArg(i),
-                           BT_desc, BT))
-      return;
+StringRef describeUninitializedArgumentInCall(const CallEvent &Call,
+                                              bool IsFirstArgument) {
+  switch (Call.getKind()) {
+  case CE_ObjCMessage: {
+    const ObjCMethodCall &Msg = cast<ObjCMethodCall>(Call);
+    switch (Msg.getMessageKind()) {
+    case OCM_Message:
+      return "Argument in message expression is an uninitialized value";
+    case OCM_PropertyAccess:
+      assert(Msg.isSetter() && "Getters have no args");
+      return "Argument for property setter is an uninitialized value";
+    case OCM_Subscript:
+      if (Msg.isSetter() && IsFirstArgument)
+        return "Argument for subscript setter is an uninitialized value";
+      return "Subscript index is an uninitialized value";
+    }
+    llvm_unreachable("Unknown message kind.");
+  }
+  case CE_Block:
+    return "Block call argument is an uninitialized value";
+  default:
+    return "Function call argument is an uninitialized value";
+  }
 }
 
 bool CallAndMessageChecker::PreVisitProcessArg(CheckerContext &C,
                                                SVal V, SourceRange argRange,
                                                const Expr *argEx,
-                                               const char *BT_desc,
-                                               llvm::OwningPtr<BugType> &BT) {
-
+                                               bool IsFirstArgument,
+                                               bool checkUninitFields,
+                                               const CallEvent &Call,
+                                               OwningPtr<BugType> &BT) {
   if (V.isUndef()) {
     if (ExplodedNode *N = C.generateSink()) {
-      LazyInit_BT(BT_desc, BT);
+      LazyInit_BT("Uninitialized argument value", BT);
 
       // Generate a report for this bug.
-      EnhancedBugReport *R = new EnhancedBugReport(*BT, BT->getName(), N);
+      StringRef Desc = describeUninitializedArgumentInCall(Call,
+                                                           IsFirstArgument);
+      BugReport *R = new BugReport(*BT, Desc, N);
       R->addRange(argRange);
       if (argEx)
-        R->addVisitorCreator(bugreporter::registerTrackNullOrUndefValue, argEx);
+        R->addVisitor(bugreporter::getTrackNullOrUndefValueVisitor(N, argEx,
+                                                                   R));
       C.EmitReport(R);
     }
     return true;
   }
 
+  if (!checkUninitFields)
+    return false;
+  
   if (const nonloc::LazyCompoundVal *LV =
         dyn_cast<nonloc::LazyCompoundVal>(&V)) {
 
     class FindUninitializedField {
     public:
-      llvm::SmallVector<const FieldDecl *, 10> FieldChain;
+      SmallVector<const FieldDecl *, 10> FieldChain;
     private:
-      ASTContext &C;
       StoreManager &StoreMgr;
       MemRegionManager &MrMgr;
       Store store;
     public:
-      FindUninitializedField(ASTContext &c, StoreManager &storeMgr,
+      FindUninitializedField(StoreManager &storeMgr,
                              MemRegionManager &mrMgr, Store s)
-      : C(c), StoreMgr(storeMgr), MrMgr(mrMgr), store(s) {}
+      : StoreMgr(storeMgr), MrMgr(mrMgr), store(s) {}
 
-      bool Find(const TypedRegion *R) {
+      bool Find(const TypedValueRegion *R) {
         QualType T = R->getValueType();
         if (const RecordType *RT = T->getAsStructureType()) {
           const RecordDecl *RD = RT->getDecl()->getDefinition();
@@ -125,13 +152,13 @@ bool CallAndMessageChecker::PreVisitProcessArg(CheckerContext &C,
                RD->field_begin(), E = RD->field_end(); I!=E; ++I) {
             const FieldRegion *FR = MrMgr.getFieldRegion(*I, R);
             FieldChain.push_back(*I);
-            T = (*I)->getType();
+            T = I->getType();
             if (T->getAsStructureType()) {
               if (Find(FR))
                 return true;
             }
             else {
-              const SVal &V = StoreMgr.Retrieve(store, loc::MemRegionVal(FR));
+              const SVal &V = StoreMgr.getBinding(store, loc::MemRegionVal(FR));
               if (V.isUndef())
                 return true;
             }
@@ -144,36 +171,35 @@ bool CallAndMessageChecker::PreVisitProcessArg(CheckerContext &C,
     };
 
     const LazyCompoundValData *D = LV->getCVData();
-    FindUninitializedField F(C.getASTContext(),
-                             C.getState()->getStateManager().getStoreManager(),
+    FindUninitializedField F(C.getState()->getStateManager().getStoreManager(),
                              C.getSValBuilder().getRegionManager(),
                              D->getStore());
 
     if (F.Find(D->getRegion())) {
       if (ExplodedNode *N = C.generateSink()) {
-        LazyInit_BT(BT_desc, BT);
-        llvm::SmallString<512> Str;
+        LazyInit_BT("Uninitialized argument value", BT);
+        SmallString<512> Str;
         llvm::raw_svector_ostream os(Str);
         os << "Passed-by-value struct argument contains uninitialized data";
 
         if (F.FieldChain.size() == 1)
-          os << " (e.g., field: '" << F.FieldChain[0] << "')";
+          os << " (e.g., field: '" << *F.FieldChain[0] << "')";
         else {
           os << " (e.g., via the field chain: '";
           bool first = true;
-          for (llvm::SmallVectorImpl<const FieldDecl *>::iterator
+          for (SmallVectorImpl<const FieldDecl *>::iterator
                DI = F.FieldChain.begin(), DE = F.FieldChain.end(); DI!=DE;++DI){
             if (first)
               first = false;
             else
               os << '.';
-            os << *DI;
+            os << **DI;
           }
           os << "')";
         }
 
         // Generate a report for this bug.
-        EnhancedBugReport *R = new EnhancedBugReport(*BT, os.str(), N);
+        BugReport *R = new BugReport(*BT, os.str(), N);
         R->addRange(argRange);
 
         // FIXME: enhance track back for uninitialized value for arbitrary
@@ -191,7 +217,9 @@ void CallAndMessageChecker::checkPreStmt(const CallExpr *CE,
                                          CheckerContext &C) const{
 
   const Expr *Callee = CE->getCallee()->IgnoreParens();
-  SVal L = C.getState()->getSVal(Callee);
+  ProgramStateRef State = C.getState();
+  const LocationContext *LCtx = C.getLocationContext();
+  SVal L = State->getSVal(Callee, LCtx);
 
   if (L.isUndef()) {
     if (!BT_call_undef)
@@ -201,63 +229,98 @@ void CallAndMessageChecker::checkPreStmt(const CallExpr *CE,
     return;
   }
 
-  if (isa<loc::ConcreteInt>(L)) {
+  if (L.isZeroConstant()) {
     if (!BT_call_null)
       BT_call_null.reset(
         new BuiltinBug("Called function pointer is null (null dereference)"));
     EmitBadCall(BT_call_null.get(), C, CE);
   }
-
-  PreVisitProcessArgs(C, CallOrObjCMessage(CE, C.getState()),
-                      "Function call argument is an uninitialized value",
-                      BT_call_arg);
 }
 
-void CallAndMessageChecker::checkPreObjCMessage(ObjCMessage msg,
-                                                CheckerContext &C) const {
+void CallAndMessageChecker::checkPreCall(const CallEvent &Call,
+                                         CheckerContext &C) const {
+  // Don't check for uninitialized field values in arguments if the
+  // caller has a body that is available and we have the chance to inline it.
+  // This is a hack, but is a reasonable compromise betweens sometimes warning
+  // and sometimes not depending on if we decide to inline a function.
+  const Decl *D = Call.getDecl();
+  const bool checkUninitFields =
+    !(C.getAnalysisManager().shouldInlineCall() &&
+      (D && D->getBody()));
 
-  const GRState *state = C.getState();
+  OwningPtr<BugType> *BT;
+  if (isa<ObjCMethodCall>(Call))
+    BT = &BT_msg_arg;
+  else
+    BT = &BT_call_arg;
 
-  // FIXME: Handle 'super'?
-  if (const Expr *receiver = msg.getInstanceReceiver()) {
-    SVal recVal = state->getSVal(receiver);
-    if (recVal.isUndef()) {
-      if (ExplodedNode *N = C.generateSink()) {
-        if (!BT_msg_undef)
-          BT_msg_undef.reset(new BuiltinBug("Receiver in message expression is "
-                                            "an uninitialized value"));
-        EnhancedBugReport *R =
-          new EnhancedBugReport(*BT_msg_undef, BT_msg_undef->getName(), N);
-        R->addRange(receiver->getSourceRange());
-        R->addVisitorCreator(bugreporter::registerTrackNullOrUndefValue,
-                             receiver);
-        C.EmitReport(R);
-      }
+  for (unsigned i = 0, e = Call.getNumArgs(); i != e; ++i)
+    if (PreVisitProcessArg(C, Call.getArgSVal(i), Call.getArgSourceRange(i),
+                           Call.getArgExpr(i), /*IsFirstArgument=*/i == 0,
+                           checkUninitFields, Call, *BT))
       return;
-    } else {
-      // Bifurcate the state into nil and non-nil ones.
-      DefinedOrUnknownSVal receiverVal = cast<DefinedOrUnknownSVal>(recVal);
-  
-      const GRState *notNilState, *nilState;
-      llvm::tie(notNilState, nilState) = state->assume(receiverVal);
-  
-      // Handle receiver must be nil.
-      if (nilState && !notNilState) {
-        HandleNilReceiver(C, state, msg);
-        return;
+}
+
+void CallAndMessageChecker::checkPreObjCMessage(const ObjCMethodCall &msg,
+                                                CheckerContext &C) const {
+  SVal recVal = msg.getReceiverSVal();
+  if (recVal.isUndef()) {
+    if (ExplodedNode *N = C.generateSink()) {
+      BugType *BT = 0;
+      switch (msg.getMessageKind()) {
+      case OCM_Message:
+        if (!BT_msg_undef)
+          BT_msg_undef.reset(new BuiltinBug("Receiver in message expression "
+                                            "is an uninitialized value"));
+        BT = BT_msg_undef.get();
+        break;
+      case OCM_PropertyAccess:
+        if (!BT_objc_prop_undef)
+          BT_objc_prop_undef.reset(new BuiltinBug("Property access on an "
+                                                  "uninitialized object "
+                                                  "pointer"));
+        BT = BT_objc_prop_undef.get();
+        break;
+      case OCM_Subscript:
+        if (!BT_objc_subscript_undef)
+          BT_objc_subscript_undef.reset(new BuiltinBug("Subscript access on an "
+                                                       "uninitialized object "
+                                                       "pointer"));
+        BT = BT_objc_subscript_undef.get();
+        break;
       }
+      assert(BT && "Unknown message kind.");
+
+      BugReport *R = new BugReport(*BT, BT->getName(), N);
+      const ObjCMessageExpr *ME = msg.getOriginExpr();
+      R->addRange(ME->getReceiverRange());
+
+      // FIXME: getTrackNullOrUndefValueVisitor can't handle "super" yet.
+      if (const Expr *ReceiverE = ME->getInstanceReceiver())
+        R->addVisitor(bugreporter::getTrackNullOrUndefValueVisitor(N,
+                                                                   ReceiverE,
+                                                                   R));
+      C.EmitReport(R);
+    }
+    return;
+  } else {
+    // Bifurcate the state into nil and non-nil ones.
+    DefinedOrUnknownSVal receiverVal = cast<DefinedOrUnknownSVal>(recVal);
+
+    ProgramStateRef state = C.getState();
+    ProgramStateRef notNilState, nilState;
+    llvm::tie(notNilState, nilState) = state->assume(receiverVal);
+
+    // Handle receiver must be nil.
+    if (nilState && !notNilState) {
+      HandleNilReceiver(C, state, msg);
+      return;
     }
   }
-
-  const char *bugDesc = msg.isPropertySetter() ?
-                     "Argument for property setter is an uninitialized value"
-                   : "Argument in message expression is an uninitialized value";
-  // Check for any arguments that are uninitialized/undefined.
-  PreVisitProcessArgs(C, CallOrObjCMessage(msg, state), bugDesc, BT_msg_arg);
 }
 
 void CallAndMessageChecker::emitNilReceiverBug(CheckerContext &C,
-                                               const ObjCMessage &msg,
+                                               const ObjCMethodCall &msg,
                                                ExplodedNode *N) const {
 
   if (!BT_msg_ret)
@@ -265,71 +328,66 @@ void CallAndMessageChecker::emitNilReceiverBug(CheckerContext &C,
       new BuiltinBug("Receiver in message expression is "
                      "'nil' and returns a garbage value"));
 
-  llvm::SmallString<200> buf;
-  llvm::raw_svector_ostream os(buf);
-  os << "The receiver of message '" << msg.getSelector().getAsString()
-     << "' is nil and returns a value of type '"
-     << msg.getType(C.getASTContext()).getAsString() << "' that will be garbage";
+  const ObjCMessageExpr *ME = msg.getOriginExpr();
 
-  EnhancedBugReport *report = new EnhancedBugReport(*BT_msg_ret, os.str(), N);
-  if (const Expr *receiver = msg.getInstanceReceiver()) {
-    report->addRange(receiver->getSourceRange());
-    report->addVisitorCreator(bugreporter::registerTrackNullOrUndefValue,
-                              receiver);
+  SmallString<200> buf;
+  llvm::raw_svector_ostream os(buf);
+  os << "The receiver of message '" << ME->getSelector().getAsString()
+     << "' is nil and returns a value of type '";
+  msg.getResultType().print(os, C.getLangOpts());
+  os << "' that will be garbage";
+
+  BugReport *report = new BugReport(*BT_msg_ret, os.str(), N);
+  report->addRange(ME->getReceiverRange());
+  // FIXME: This won't track "self" in messages to super.
+  if (const Expr *receiver = ME->getInstanceReceiver()) {
+    report->addVisitor(bugreporter::getTrackNullOrUndefValueVisitor(N,
+                                                                    receiver,
+                                                                    report));
   }
   C.EmitReport(report);
 }
 
 static bool supportsNilWithFloatRet(const llvm::Triple &triple) {
-  return triple.getVendor() == llvm::Triple::Apple &&
-         (triple.getDarwinMajorNumber() >= 9 || 
-          triple.getArch() == llvm::Triple::arm || 
-          triple.getArch() == llvm::Triple::thumb);
+  return (triple.getVendor() == llvm::Triple::Apple &&
+          (triple.getOS() == llvm::Triple::IOS ||
+           !triple.isMacOSXVersionLT(10,5)));
 }
 
 void CallAndMessageChecker::HandleNilReceiver(CheckerContext &C,
-                                              const GRState *state,
-                                              ObjCMessage msg) const {
+                                              ProgramStateRef state,
+                                              const ObjCMethodCall &Msg) const {
   ASTContext &Ctx = C.getASTContext();
 
   // Check the return type of the message expression.  A message to nil will
   // return different values depending on the return type and the architecture.
-  QualType RetTy = msg.getType(Ctx);
-
+  QualType RetTy = Msg.getResultType();
   CanQualType CanRetTy = Ctx.getCanonicalType(RetTy);
+  const LocationContext *LCtx = C.getLocationContext();
 
   if (CanRetTy->isStructureOrClassType()) {
-    // FIXME: At some point we shouldn't rely on isConsumedExpr(), but instead
-    // have the "use of undefined value" be smarter about where the
-    // undefined value came from.
-    if (C.getPredecessor()->getParentMap().isConsumedExpr(msg.getOriginExpr())){
-      if (ExplodedNode* N = C.generateSink(state))
-        emitNilReceiverBug(C, msg, N);
-      return;
-    }
-
-    // The result is not consumed by a surrounding expression.  Just propagate
-    // the current state.
-    C.addTransition(state);
+    // Structure returns are safe since the compiler zeroes them out.
+    SVal V = C.getSValBuilder().makeZeroVal(RetTy);
+    C.addTransition(state->BindExpr(Msg.getOriginExpr(), LCtx, V));
     return;
   }
 
-  // Other cases: check if the return type is smaller than void*.
-  if (CanRetTy != Ctx.VoidTy &&
-      C.getPredecessor()->getParentMap().isConsumedExpr(msg.getOriginExpr())) {
+  // Other cases: check if sizeof(return type) > sizeof(void*)
+  if (CanRetTy != Ctx.VoidTy && C.getLocationContext()->getParentMap()
+                                  .isConsumedExpr(Msg.getOriginExpr())) {
     // Compute: sizeof(void *) and sizeof(return type)
     const uint64_t voidPtrSize = Ctx.getTypeSize(Ctx.VoidPtrTy);
     const uint64_t returnTypeSize = Ctx.getTypeSize(CanRetTy);
 
     if (voidPtrSize < returnTypeSize &&
-        !(supportsNilWithFloatRet(Ctx.Target.getTriple()) &&
+        !(supportsNilWithFloatRet(Ctx.getTargetInfo().getTriple()) &&
           (Ctx.FloatTy == CanRetTy ||
            Ctx.DoubleTy == CanRetTy ||
            Ctx.LongDoubleTy == CanRetTy ||
            Ctx.LongLongTy == CanRetTy ||
            Ctx.UnsignedLongLongTy == CanRetTy))) {
-      if (ExplodedNode* N = C.generateSink(state))
-        emitNilReceiverBug(C, msg, N);
+      if (ExplodedNode *N = C.generateSink(state))
+        emitNilReceiverBug(C, Msg, N);
       return;
     }
 
@@ -346,8 +404,8 @@ void CallAndMessageChecker::HandleNilReceiver(CheckerContext &C,
     // it most likely isn't nil.  We should assume the semantics
     // of this case unless we have *a lot* more knowledge.
     //
-    SVal V = C.getSValBuilder().makeZeroVal(msg.getType(Ctx));
-    C.generateNode(state->BindExpr(msg.getOriginExpr(), V));
+    SVal V = C.getSValBuilder().makeZeroVal(RetTy);
+    C.addTransition(state->BindExpr(Msg.getOriginExpr(), LCtx, V));
     return;
   }
 

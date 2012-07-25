@@ -12,9 +12,16 @@
 // RUN: grep "define void @test3()" %t
 // RUN: grep "define available_externally i32 @test4" %t
 // RUN: grep "define available_externally i32 @test5" %t
+// RUN: grep "define i32 @test6" %t
+// RUN: grep "define void @test7" %t
+// RUN: grep "define i.. @strlcpy" %t
+// RUN: not grep test9 %t
+// RUN: grep "define void @testA" %t
+// RUN: grep "define void @testB" %t
+// RUN: grep "define void @testC" %t
 
-// RUN: echo "\nC99 tests:"
-// RUN: %clang %s -O1 -emit-llvm -S -o %t -std=c99
+// RUN: echo "C99 tests:"
+// RUN: %clang %s -O1 -emit-llvm -S -o %t -std=gnu99
 // RUN: grep "define i32 @ei()" %t
 // RUN: grep "define available_externally i32 @foo()" %t
 // RUN: grep "define i32 @bar()" %t
@@ -27,9 +34,16 @@
 // RUN: grep "define void @test3" %t
 // RUN: grep "define available_externally i32 @test4" %t
 // RUN: grep "define available_externally i32 @test5" %t
+// RUN: grep "define i32 @test6" %t
+// RUN: grep "define void @test7" %t
+// RUN: grep "define available_externally i.. @strlcpy" %t
+// RUN: grep "define void @test9" %t
+// RUN: grep "define void @testA" %t
+// RUN: grep "define void @testB" %t
+// RUN: grep "define void @testC" %t
 
-// RUN: echo "\nC++ tests:"
-// RUN: %clang %s -O1 -emit-llvm -S -o %t -std=c++98
+// RUN: echo "C++ tests:"
+// RUN: %clang -x c++ %s -O1 -emit-llvm -S -o %t -std=c++98
 // RUN: grep "define linkonce_odr i32 @_Z2eiv()" %t
 // RUN: grep "define linkonce_odr i32 @_Z3foov()" %t
 // RUN: grep "define i32 @_Z3barv()" %t
@@ -84,3 +98,32 @@ extern __inline int __attribute__ ((__gnu_inline__)) test5(void)
 }
 
 void test_test5() { test5(); }
+
+// PR10233
+
+__inline int test6() { return 0; }
+extern int test6();
+
+
+// No PR#, but this once crashed clang in C99 mode due to buggy extern inline
+// redeclaration detection.
+void test7() { }
+void test7();
+
+// PR11062; the fact that the function is named strlcpy matters here.
+inline __typeof(sizeof(int)) strlcpy(char *dest, const char *src, __typeof(sizeof(int)) size) { return 3; }
+void test8() { strlcpy(0,0,0); }
+
+// PR10657; the test crashed in C99 mode
+extern inline void test9() { }
+void test9();
+
+inline void testA() {}
+void testA();
+
+void testB();
+inline void testB() {}
+extern void testB();
+
+extern inline void testC() {}
+inline void testC();

@@ -20,7 +20,7 @@
 #include "clang/StaticAnalyzer/Core/CheckerManager.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
-#include "clang/StaticAnalyzer/Core/PathSensitive/GRStateTrait.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/ProgramStateTrait.h"
 #include "clang/Basic/TargetInfo.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -31,22 +31,17 @@ using namespace ento;
 
 namespace {
 class MacOSXAPIChecker : public Checker< check::PreStmt<CallExpr> > {
-  enum SubChecks {
-    DispatchOnce = 0,
-    DispatchOnceF,
-    NumChecks
-  };
-
-  mutable BugType *BTypes[NumChecks];
+  mutable OwningPtr<BugType> BT_dispatchOnce;
 
 public:
-  MacOSXAPIChecker() { memset(BTypes, 0, sizeof(*BTypes) * NumChecks); }
-  ~MacOSXAPIChecker() {
-    for (unsigned i=0; i != NumChecks; ++i)
-      delete BTypes[i];
-  }
-
   void checkPreStmt(const CallExpr *CE, CheckerContext &C) const;
+
+  void CheckDispatchOnce(CheckerContext &C, const CallExpr *CE,
+                         StringRef FName) const;
+
+  typedef void (MacOSXAPIChecker::*SubChecker)(CheckerContext &,
+                                               const CallExpr *,
+                                               StringRef FName) const;
 };
 } //end anonymous namespace
 
@@ -54,23 +49,16 @@ public:
 // dispatch_once and dispatch_once_f
 //===----------------------------------------------------------------------===//
 
-static void CheckDispatchOnce(CheckerContext &C, const CallExpr *CE,
-                              BugType *&BT, const IdentifierInfo *FI) {
-
-  if (!BT) {
-    llvm::SmallString<128> S;
-    llvm::raw_svector_ostream os(S);
-    os << "Improper use of '" << FI->getName() << '\'';
-    BT = new BugType(os.str(), "Mac OS X API");
-  }
-
+void MacOSXAPIChecker::CheckDispatchOnce(CheckerContext &C, const CallExpr *CE,
+                                         StringRef FName) const {
   if (CE->getNumArgs() < 1)
     return;
 
   // Check if the first argument is stack allocated.  If so, issue a warning
   // because that's likely to be bad news.
-  const GRState *state = C.getState();
-  const MemRegion *R = state->getSVal(CE->getArg(0)).getAsRegion();
+  ProgramStateRef state = C.getState();
+  const MemRegion *R =
+    state->getSVal(CE->getArg(0), C.getLocationContext()).getAsRegion();
   if (!R || !isa<StackSpaceRegion>(R->getMemorySpace()))
     return;
 
@@ -78,9 +66,13 @@ static void CheckDispatchOnce(CheckerContext &C, const CallExpr *CE,
   if (!N)
     return;
 
-  llvm::SmallString<256> S;
+  if (!BT_dispatchOnce)
+    BT_dispatchOnce.reset(new BugType("Improper use of 'dispatch_once'",
+                                      "Mac OS X API"));
+
+  SmallString<256> S;
   llvm::raw_svector_ostream os(S);
-  os << "Call to '" << FI->getName() << "' uses";
+  os << "Call to '" << FName << "' uses";
   if (const VarRegion *VR = dyn_cast<VarRegion>(R))
     os << " the local variable '" << VR->getDecl()->getName() << '\'';
   else
@@ -90,7 +82,7 @@ static void CheckDispatchOnce(CheckerContext &C, const CallExpr *CE,
   if (isa<VarRegion>(R) && isa<StackLocalsSpaceRegion>(R->getMemorySpace()))
     os << "  Perhaps you intended to declare the variable as 'static'?";
 
-  EnhancedBugReport *report = new EnhancedBugReport(*BT, os.str(), N);
+  BugReport *report = new BugReport(*BT_dispatchOnce, os.str(), N);
   report->addRange(CE->getArg(0)->getSourceRange());
   C.EmitReport(report);
 }
@@ -99,47 +91,20 @@ static void CheckDispatchOnce(CheckerContext &C, const CallExpr *CE,
 // Central dispatch function.
 //===----------------------------------------------------------------------===//
 
-typedef void (*SubChecker)(CheckerContext &C, const CallExpr *CE, BugType *&BT,
-                           const IdentifierInfo *FI);
-namespace {
-  class SubCheck {
-    SubChecker SC;
-    BugType **BT;
-  public:
-    SubCheck(SubChecker sc, BugType *& bt) : SC(sc), BT(&bt) {}
-    SubCheck() : SC(NULL), BT(NULL) {}
-
-    void run(CheckerContext &C, const CallExpr *CE,
-             const IdentifierInfo *FI) const {
-      if (SC)
-        SC(C, CE, *BT, FI);
-    }
-  };
-} // end anonymous namespace
-
 void MacOSXAPIChecker::checkPreStmt(const CallExpr *CE,
                                     CheckerContext &C) const {
-  // FIXME: Mostly copy and paste from UnixAPIChecker.  Should refactor.
-  const GRState *state = C.getState();
-  const Expr *Callee = CE->getCallee();
-  const FunctionTextRegion *Fn =
-    dyn_cast_or_null<FunctionTextRegion>(state->getSVal(Callee).getAsRegion());
-
-  if (!Fn)
+  StringRef Name = C.getCalleeName(CE);
+  if (Name.empty())
     return;
 
-  const IdentifierInfo *FI = Fn->getDecl()->getIdentifier();
-  if (!FI)
-    return;
+  SubChecker SC =
+    llvm::StringSwitch<SubChecker>(Name)
+      .Cases("dispatch_once", "dispatch_once_f",
+             &MacOSXAPIChecker::CheckDispatchOnce)
+      .Default(NULL);
 
-  const SubCheck &SC =
-    llvm::StringSwitch<SubCheck>(FI->getName())
-      .Case("dispatch_once", SubCheck(CheckDispatchOnce, BTypes[DispatchOnce]))
-      .Case("dispatch_once_f", SubCheck(CheckDispatchOnce,
-                                        BTypes[DispatchOnceF]))
-      .Default(SubCheck());
-
-  SC.run(C, CE, FI);
+  if (SC)
+    (this->*SC)(C, CE, Name);
 }
 
 //===----------------------------------------------------------------------===//

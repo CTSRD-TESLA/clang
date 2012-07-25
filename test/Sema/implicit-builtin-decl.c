@@ -1,6 +1,6 @@
 // RUN: %clang_cc1 -fsyntax-only -verify %s
 void f() {
-  int *ptr = malloc(sizeof(int) * 10); // expected-warning{{implicitly declaring C library function 'malloc' with type}} \
+  int *ptr = malloc(sizeof(int) * 10); // expected-warning{{implicitly declaring library function 'malloc' with type}} \
   // expected-note{{please include the header <stdlib.h> or explicitly provide a declaration for 'malloc'}} \
   // expected-note{{'malloc' is a builtin with type 'void *}}
 }
@@ -55,3 +55,5 @@ void snprintf() { }
 
 // PR8316
 void longjmp(); // expected-warning{{declaration of built-in function 'longjmp' requires inclusion of the header <setjmp.h>}}
+
+extern float fmaxf(float, float);

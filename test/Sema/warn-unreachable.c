@@ -1,4 +1,4 @@
-// RUN: %clang %s -fsyntax-only -Xclang -verify -fblocks -Wunreachable-code -Wno-unused-value
+// RUN: %clang %s -fsyntax-only -Xclang -verify -fblocks -Wunreachable-code -Wno-unused-value -Wno-covered-switch-default
 
 int halt() __attribute__((noreturn));
 int live();
@@ -80,8 +80,8 @@ void test2() {
     -           // expected-warning {{will never be executed}}
       halt();
   case 8:
-    i
-      +=        // expected-warning {{will never be executed}}
+    i           // expected-warning {{will never be executed}}
+      +=
       halt();
   case 9:
     halt()
@@ -93,8 +93,8 @@ void test2() {
   case 11: {
     int a[5];
     live(),
-      a[halt()
-        ];      // expected-warning {{will never be executed}}
+      a[halt()  // expected-warning {{will never be executed}}
+        ];
   }
   }
 }
@@ -112,5 +112,23 @@ int test_enum_cases(enum Cases C) {
       return i;
     }
   }  
+}
+
+// Handle unreachable code triggered by macro expansions.
+void __myassert_rtn(const char *, const char *, int, const char *) __attribute__((__noreturn__));
+
+#define myassert(e) \
+    (__builtin_expect(!(e), 0) ? __myassert_rtn(__func__, __FILE__, __LINE__, #e) : (void)0)
+
+void test_assert() {
+  myassert(0 && "unreachable");
+  return; // no-warning
+}
+
+// Test case for PR 9774.  Tests that dead code in macros aren't warned about.
+#define MY_MAX(a,b)     ((a) >= (b) ? (a) : (b))
+void PR9774(int *s) {
+    for (int i = 0; i < MY_MAX(2, 3); i++) // no-warning
+        s[i] = 0;
 }
 

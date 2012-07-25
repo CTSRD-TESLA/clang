@@ -13,7 +13,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "clang/AST/ASTContext.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/BasicValueFactory.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/Store.h"
 
 using namespace clang;
 using namespace ento;
@@ -25,8 +27,9 @@ void CompoundValData::Profile(llvm::FoldingSetNodeID& ID, QualType T,
 }
 
 void LazyCompoundValData::Profile(llvm::FoldingSetNodeID& ID,
-                                  const void *store,const TypedRegion *region) {
-  ID.AddPointer(store);
+                                  const StoreRef &store,
+                                  const TypedValueRegion *region) {
+  ID.AddPointer(store.getStore());
   ID.AddPointer(region);
 }
 
@@ -68,7 +71,7 @@ BasicValueFactory::~BasicValueFactory() {
 
 const llvm::APSInt& BasicValueFactory::getValue(const llvm::APSInt& X) {
   llvm::FoldingSetNodeID ID;
-  void* InsertPos;
+  void *InsertPos;
   typedef llvm::FoldingSetNodeWrapper<llvm::APSInt> FoldNodeTy;
 
   X.Profile(ID);
@@ -99,7 +102,8 @@ const llvm::APSInt& BasicValueFactory::getValue(uint64_t X, unsigned BitWidth,
 const llvm::APSInt& BasicValueFactory::getValue(uint64_t X, QualType T) {
 
   unsigned bits = Ctx.getTypeSize(T);
-  llvm::APSInt V(bits, T->isUnsignedIntegerType() || Loc::isLocType(T));
+  llvm::APSInt V(bits, 
+                 T->isUnsignedIntegerOrEnumerationType() || Loc::isLocType(T));
   V = X;
   return getValue(V);
 }
@@ -110,7 +114,7 @@ BasicValueFactory::getCompoundValData(QualType T,
 
   llvm::FoldingSetNodeID ID;
   CompoundValData::Profile(ID, T, Vals);
-  void* InsertPos;
+  void *InsertPos;
 
   CompoundValData* D = CompoundValDataSet.FindNodeOrInsertPos(ID, InsertPos);
 
@@ -124,11 +128,11 @@ BasicValueFactory::getCompoundValData(QualType T,
 }
 
 const LazyCompoundValData*
-BasicValueFactory::getLazyCompoundValData(const void *store,
-                                          const TypedRegion *region) {
+BasicValueFactory::getLazyCompoundValData(const StoreRef &store,
+                                          const TypedValueRegion *region) {
   llvm::FoldingSetNodeID ID;
   LazyCompoundValData::Profile(ID, store, region);
-  void* InsertPos;
+  void *InsertPos;
 
   LazyCompoundValData *D =
     LazyCompoundValDataSet.FindNodeOrInsertPos(ID, InsertPos);
@@ -240,7 +244,7 @@ BasicValueFactory::getPersistentSValWithData(const SVal& V, uintptr_t Data) {
   if (!PersistentSVals) PersistentSVals = new PersistentSValsTy();
 
   llvm::FoldingSetNodeID ID;
-  void* InsertPos;
+  void *InsertPos;
   V.Profile(ID);
   ID.AddPointer((void*) Data);
 
@@ -265,7 +269,7 @@ BasicValueFactory::getPersistentSValPair(const SVal& V1, const SVal& V2) {
   if (!PersistentSValPairs) PersistentSValPairs = new PersistentSValPairsTy();
 
   llvm::FoldingSetNodeID ID;
-  void* InsertPos;
+  void *InsertPos;
   V1.Profile(ID);
   V2.Profile(ID);
 

@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify %s -std=c++0x
+// RUN: %clang_cc1 -fsyntax-only -verify %s -std=c++11
 
 #ifndef __GXX_EXPERIMENTAL_CXX0X__
 #define __CONCAT(__X, __Y) __CONCAT1(__X, __Y)
@@ -258,4 +258,18 @@ namespace pr9247 {
       C* f(int foo);
     };
   };
+}
+
+namespace pr12658 {
+  class C {
+    public:
+      C(int v){}
+      virtual void f() = 0; // expected-note {{unimplemented pure virtual method 'f' in 'C'}}
+  };
+
+  void foo( C& c ) {}
+
+  void bar( void ) {
+    foo(C(99)); // expected-error {{allocating an object of abstract class type 'pr12658::C'}}
+  }
 }

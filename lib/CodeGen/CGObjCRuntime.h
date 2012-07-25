@@ -17,7 +17,6 @@
 #define CLANG_CODEGEN_OBCJRUNTIME_H
 #include "clang/Basic/IdentifierTable.h" // Selector
 #include "clang/AST/DeclObjC.h"
-#include <string>
 
 #include "CGBuilder.h"
 #include "CGCall.h"
@@ -64,6 +63,9 @@ namespace CodeGen {
 /// Implements runtime-specific code generation functions.
 class CGObjCRuntime {
 protected:
+  CodeGen::CodeGenModule &CGM;
+  CGObjCRuntime(CodeGen::CodeGenModule &CGM) : CGM(CGM) {}
+
   // Utility functions for unified ivar access. These need to
   // eventually be folded into other places (the structure layout
   // code).
@@ -87,6 +89,26 @@ protected:
                                   const ObjCIvarDecl *Ivar,
                                   unsigned CVRQualifiers,
                                   llvm::Value *Offset);
+  /// Emits a try / catch statement.  This function is intended to be called by
+  /// subclasses, and provides a generic mechanism for generating these, which
+  /// should be usable by all runtimes.  The caller must provide the functions
+  /// to call when entering and exiting a \@catch() block, and the function
+  /// used to rethrow exceptions.  If the begin and end catch functions are
+  /// NULL, then the function assumes that the EH personality function provides
+  /// the thrown object directly.
+  void EmitTryCatchStmt(CodeGenFunction &CGF,
+                        const ObjCAtTryStmt &S,
+                        llvm::Constant *beginCatchFn,
+                        llvm::Constant *endCatchFn,
+                        llvm::Constant *exceptionRethrowFn);
+  /// Emits an \@synchronize() statement, using the \p syncEnterFn and
+  /// \p syncExitFn arguments as the functions called to lock and unlock
+  /// the object.  This function can be called by subclasses that use
+  /// zero-cost exception handling.
+  void EmitAtSynchronizedStmt(CodeGenFunction &CGF,
+                            const ObjCAtSynchronizedStmt &S,
+                            llvm::Function *syncEnterFn,
+                            llvm::Function *syncExitFn);
 
 public:
   virtual ~CGObjCRuntime();
@@ -113,13 +135,16 @@ public:
 
   /// Generate a constant string object.
   virtual llvm::Constant *GenerateConstantString(const StringLiteral *) = 0;
-
+  
   /// Generate a category.  A category contains a list of methods (and
   /// accompanying metadata) and a list of protocols.
   virtual void GenerateCategory(const ObjCCategoryImplDecl *OCD) = 0;
 
-  /// Generate a class stucture for this class.
+  /// Generate a class structure for this class.
   virtual void GenerateClass(const ObjCImplementationDecl *OID) = 0;
+
+  /// Register an class alias.
+  virtual void RegisterAlias(const ObjCCompatibleAliasDecl *OAD) = 0;
 
   /// Generate an Objective-C message send operation.
   ///
@@ -154,7 +179,7 @@ public:
                            const ObjCMethodDecl *Method = 0) = 0;
 
   /// Emit the code to return the named protocol as an object, as in a
-  /// @protocol expression.
+  /// \@protocol expression.
   virtual llvm::Value *GenerateProtocolRef(CGBuilderTy &Builder,
                                            const ObjCProtocolDecl *OPD) = 0;
 
@@ -177,16 +202,28 @@ public:
   /// Return the runtime function for setting properties.
   virtual llvm::Constant *GetPropertySetFunction() = 0;
 
+  /// Return the runtime function for optimized setting properties.
+  virtual llvm::Constant *GetOptimizedPropertySetFunction(bool atomic, 
+                                                          bool copy) = 0;
+
   // API for atomic copying of qualified aggregates in getter.
   virtual llvm::Constant *GetGetStructFunction() = 0;
   // API for atomic copying of qualified aggregates in setter.
   virtual llvm::Constant *GetSetStructFunction() = 0;
+  // API for atomic copying of qualified aggregates with non-trivial copy
+  // assignment (c++) in setter/getter.
+  virtual llvm::Constant *GetCppAtomicObjectFunction() = 0;
   
   /// GetClass - Return a reference to the class for the given
   /// interface decl.
   virtual llvm::Value *GetClass(CGBuilderTy &Builder,
                                 const ObjCInterfaceDecl *OID) = 0;
-
+  
+  
+  virtual llvm::Value *EmitNSAutoreleasePoolClassRef(CGBuilderTy &Builder) {
+    llvm_unreachable("autoreleasepool unsupported in this ABI");
+  }
+  
   /// EnumerationMutationFunction - Return the function that's called by the
   /// compiler when a mutation is detected during foreach iteration.
   virtual llvm::Constant *EnumerationMutationFunction() = 0;
@@ -224,13 +261,26 @@ public:
                                         llvm::Value *Size) = 0;
   virtual llvm::Constant *BuildGCBlockLayout(CodeGen::CodeGenModule &CGM,
                                   const CodeGen::CGBlockInfo &blockInfo) = 0;
+  virtual llvm::GlobalVariable *GetClassGlobal(const std::string &Name) = 0;
+
+  struct MessageSendInfo {
+    const CGFunctionInfo &CallInfo;
+    llvm::PointerType *MessengerType;
+
+    MessageSendInfo(const CGFunctionInfo &callInfo,
+                    llvm::PointerType *messengerType)
+      : CallInfo(callInfo), MessengerType(messengerType) {}
+  };
+
+  MessageSendInfo getMessageSendInfo(const ObjCMethodDecl *method,
+                                     QualType resultType,
+                                     CallArgList &callArgs);
 };
 
 /// Creates an instance of an Objective-C runtime class.
 //TODO: This should include some way of selecting which runtime to target.
 CGObjCRuntime *CreateGNUObjCRuntime(CodeGenModule &CGM);
 CGObjCRuntime *CreateMacObjCRuntime(CodeGenModule &CGM);
-CGObjCRuntime *CreateMacNonFragileABIObjCRuntime(CodeGenModule &CGM);
 }
 }
 #endif

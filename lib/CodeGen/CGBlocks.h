@@ -17,13 +17,13 @@
 #include "CodeGenTypes.h"
 #include "clang/AST/Type.h"
 #include "llvm/Module.h"
-#include "llvm/ADT/SmallVector.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/AST/CharUnits.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/ExprObjC.h"
 
+#include "CodeGenFunction.h"
 #include "CGBuilder.h"
 #include "CGCall.h"
 #include "CGValue.h"
@@ -89,7 +89,7 @@ enum BlockFieldFlag_t {
                                     variable */
   BLOCK_FIELD_IS_WEAK     = 0x10,  /* declared __weak, only used in byref copy
                                     helpers */
-
+  BLOCK_FIELD_IS_ARC      = 0x40,  /* field has ARC-specific semantics */
   BLOCK_BYREF_CALLER      = 128,   /* called from __block (byref) copy/dispose
                                       support routines */
   BLOCK_BYREF_CURRENT_MAX = 256
@@ -129,13 +129,14 @@ inline BlockFieldFlags operator|(BlockFieldFlag_t l, BlockFieldFlag_t r) {
 class CGBlockInfo {
 public:
   /// Name - The name of the block, kindof.
-  const char *Name;
+  llvm::StringRef Name;
 
   /// The field index of 'this' within the block, if there is one.
   unsigned CXXThisIndex;
 
   class Capture {
     uintptr_t Data;
+    EHScopeStack::stable_iterator Cleanup;
 
   public:
     bool isIndex() const { return (Data & 1) != 0; }
@@ -144,6 +145,14 @@ public:
     llvm::Value *getConstant() const {
       assert(isConstant());
       return reinterpret_cast<llvm::Value*>(Data);
+    }
+    EHScopeStack::stable_iterator getCleanup() const {
+      assert(isIndex());
+      return Cleanup;
+    }
+    void setCleanup(EHScopeStack::stable_iterator cleanup) {
+      assert(isIndex());
+      Cleanup = cleanup;
     }
 
     static Capture makeIndex(unsigned index) {
@@ -159,9 +168,6 @@ public:
     }    
   };
 
-  /// The mapping of allocated indexes within the block.
-  llvm::DenseMap<const VarDecl*, Capture> Captures;  
-
   /// CanBeGlobal - True if the block can be global, i.e. it has
   /// no non-constant captures.
   bool CanBeGlobal : 1;
@@ -173,22 +179,48 @@ public:
   /// need to be run even in GC mode.
   bool HasCXXObject : 1;
 
-  const llvm::StructType *StructureType;
-  const BlockExpr *Block;
+  /// UsesStret : True if the block uses an stret return.  Mutable
+  /// because it gets set later in the block-creation process.
+  mutable bool UsesStret : 1;
+
+  /// The mapping of allocated indexes within the block.
+  llvm::DenseMap<const VarDecl*, Capture> Captures;  
+
+  llvm::AllocaInst *Address;
+  llvm::StructType *StructureType;
+  const BlockDecl *Block;
+  const BlockExpr *BlockExpression;
   CharUnits BlockSize;
   CharUnits BlockAlign;
 
+  /// An instruction which dominates the full-expression that the
+  /// block is inside.
+  llvm::Instruction *DominatingIP;
+
+  /// The next block in the block-info chain.  Invalid if this block
+  /// info is not part of the CGF's block-info chain, which is true
+  /// if it corresponds to a global block or a block whose expression
+  /// has been encountered.
+  CGBlockInfo *NextBlockInfo;
+
   const Capture &getCapture(const VarDecl *var) const {
-    llvm::DenseMap<const VarDecl*, Capture>::const_iterator
+    return const_cast<CGBlockInfo*>(this)->getCapture(var);
+  }
+  Capture &getCapture(const VarDecl *var) {
+    llvm::DenseMap<const VarDecl*, Capture>::iterator
       it = Captures.find(var);
     assert(it != Captures.end() && "no entry for variable!");
     return it->second;
   }
 
-  const BlockDecl *getBlockDecl() const { return Block->getBlockDecl(); }
-  const BlockExpr *getBlockExpr() const { return Block; }
+  const BlockDecl *getBlockDecl() const { return Block; }
+  const BlockExpr *getBlockExpr() const {
+    assert(BlockExpression);
+    assert(BlockExpression->getBlockDecl() == Block);
+    return BlockExpression;
+  }
 
-  CGBlockInfo(const BlockExpr *blockExpr, const char *Name);
+  CGBlockInfo(const BlockDecl *blockDecl, llvm::StringRef Name);
 };
 
 }  // end namespace CodeGen

@@ -21,11 +21,14 @@ MacroInfo::MacroInfo(SourceLocation DefLoc) : Location(DefLoc) {
   IsGNUVarargs = false;
   IsBuiltinMacro = false;
   IsFromAST = false;
+  ChangedAfterLoad = false;
   IsDisabled = false;
   IsUsed = false;
   IsAllowRedefinitionsWithoutWarning = false;
   IsWarnIfUnused = false;
-
+  IsDefinitionLengthCached = false;
+  IsPublic = true;
+  
   ArgumentList = 0;
   NumArguments = 0;
 }
@@ -39,12 +42,47 @@ MacroInfo::MacroInfo(const MacroInfo &MI, llvm::BumpPtrAllocator &PPAllocator) {
   IsGNUVarargs = MI.IsGNUVarargs;
   IsBuiltinMacro = MI.IsBuiltinMacro;
   IsFromAST = MI.IsFromAST;
+  ChangedAfterLoad = MI.ChangedAfterLoad;
   IsDisabled = MI.IsDisabled;
   IsUsed = MI.IsUsed;
   IsAllowRedefinitionsWithoutWarning = MI.IsAllowRedefinitionsWithoutWarning;
+  IsWarnIfUnused = MI.IsWarnIfUnused;
+  IsDefinitionLengthCached = MI.IsDefinitionLengthCached;
+  DefinitionLength = MI.DefinitionLength;
+  IsPublic = MI.IsPublic;
+  
   ArgumentList = 0;
   NumArguments = 0;
   setArgumentList(MI.ArgumentList, MI.NumArguments, PPAllocator);
+}
+
+unsigned MacroInfo::getDefinitionLengthSlow(SourceManager &SM) const {
+  assert(!IsDefinitionLengthCached);
+  IsDefinitionLengthCached = true;
+
+  if (ReplacementTokens.empty())
+    return (DefinitionLength = 0);
+
+  const Token &firstToken = ReplacementTokens.front();
+  const Token &lastToken = ReplacementTokens.back();
+  SourceLocation macroStart = firstToken.getLocation();
+  SourceLocation macroEnd = lastToken.getLocation();
+  assert(macroStart.isValid() && macroEnd.isValid());
+  assert((macroStart.isFileID() || firstToken.is(tok::comment)) &&
+         "Macro defined in macro?");
+  assert((macroEnd.isFileID() || lastToken.is(tok::comment)) &&
+         "Macro defined in macro?");
+  std::pair<FileID, unsigned>
+      startInfo = SM.getDecomposedExpansionLoc(macroStart);
+  std::pair<FileID, unsigned>
+      endInfo = SM.getDecomposedExpansionLoc(macroEnd);
+  assert(startInfo.first == endInfo.first &&
+         "Macro definition spanning multiple FileIDs ?");
+  assert(startInfo.second <= endInfo.second);
+  DefinitionLength = endInfo.second - startInfo.second;
+  DefinitionLength += lastToken.getLength();
+
+  return DefinitionLength;
 }
 
 /// isIdenticalTo - Return true if the specified macro definition is equal to

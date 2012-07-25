@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify %s
+// RUN: %clang_cc1 -fsyntax-only -verify -Wno-objc-root-class %s
 
 typedef struct CGColor * __attribute__ ((NSObject)) CGColorRef;
 static int count;
@@ -15,8 +15,8 @@ typedef void *  __attribute__ ((NSObject)) CGColorRef2; // expected-error {{__at
 
 @property(copy) CGColorRef x;
 // rdar: // 7809460
-typedef struct CGColor *CGColorRefNoNSObject;
-@property (nonatomic, retain) __attribute__((NSObject)) CGColorRefNoNSObject color;
+typedef struct CGColor * __attribute__((NSObject)) CGColorRefNoNSObject;
+@property (nonatomic, retain) CGColorRefNoNSObject color;
 @end
 
 void setProperty(id self, id value)  {
@@ -39,4 +39,26 @@ int main(int argc, char *argv[]) {
       to.x = tmp;
     return 0;
 }
+
+// rdar://10453342
+@interface I
+{
+   __attribute__((NSObject)) void * color; // expected-warning {{__attribute ((NSObject)) may be put on a typedef only, attribute is ignored}}
+}
+  // <rdar://problem/10930507>
+@property (nonatomic, retain) __attribute__((NSObject)) CGColorRefNoNSObject color; // // no-warning
+@end
+void test_10453342() {
+    char* __attribute__((NSObject)) string2 = 0; // expected-warning {{__attribute ((NSObject)) may be put on a typedef only, attribute is ignored}}
+}
+
+// rdar://11569860
+@interface A { int i; }
+@property(retain) __attribute__((NSObject)) int i; // expected-error {{__attribute ((NSObject)) is for pointer types only}} \
+  						   // expected-error {{property with 'retain (or strong)' attribute must be of object type}}
+@end
+
+@implementation A
+@synthesize i;
+@end
 

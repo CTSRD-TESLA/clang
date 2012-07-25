@@ -25,6 +25,15 @@ namespace radar9046492 {
 
 void foo() FOO; // expected-note {{candidate function has been explicitly made unavailable}}
 void bar() {
-  foo(); // expected-error {{call to unavailable function 'foo' not available - replaced}}
+  foo(); // expected-error {{call to unavailable function 'foo': not available - replaced}}
 }
+}
+
+void unavail(short* sp)  __attribute__((__unavailable__));
+void unavail(short* sp) {
+  // No complains inside an unavailable function.
+  int &ir = foo(1);
+  double &dr = foo(1.0);
+  foo(sp);
+  foo();
 }

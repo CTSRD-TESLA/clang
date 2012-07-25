@@ -395,7 +395,7 @@ namespace Elision {
     // CHECK-NEXT: call void @_ZN7Elision1AD1Ev([[A]]* [[I]])
   }
 
-  // CHECK: define void @_ZN7Elision5test2Ev([[A]]* sret
+  // CHECK: define void @_ZN7Elision5test2Ev([[A]]* noalias sret
   A test2() {
     // CHECK:      call void @_ZN7Elision3fooEv()
     // CHECK-NEXT: call void @_ZN7Elision1AC1Ev([[A]]* [[RET:%.*]])
@@ -403,7 +403,7 @@ namespace Elision {
     return (foo(), A());
   }
 
-  // CHECK: define void @_ZN7Elision5test3EiNS_1AE([[A]]* sret
+  // CHECK: define void @_ZN7Elision5test3EiNS_1AE([[A]]* noalias sret
   A test3(int v, A x) {
     if (v < 5)
     // CHECK:      call void @_ZN7Elision1AC1Ev([[A]]* [[RET:%.*]])
@@ -421,34 +421,30 @@ namespace Elision {
   void test4() {
     // CHECK:      [[X:%.*]] = alloca [[A]], align 8
     // CHECK-NEXT: [[XS:%.*]] = alloca [2 x [[A]]], align 16
-    // CHECK-NEXT: [[I:%.*]] = alloca i64
 
     // CHECK-NEXT: call void @_ZN7Elision1AC1Ev([[A]]* [[X]])
     A x;
 
-    // CHECK-NEXT: [[XS0:%.*]] = getelementptr inbounds [2 x [[A]]]* [[XS]], i32 0, i32 0
+    // CHECK-NEXT: [[XS0:%.*]] = getelementptr inbounds [2 x [[A]]]* [[XS]], i64 0, i64 0
     // CHECK-NEXT: call void @_ZN7Elision1AC1Ev([[A]]* [[XS0]])
-    // CHECK-NEXT: [[XS1:%.*]] = getelementptr inbounds [2 x [[A]]]* [[XS]], i32 0, i32 1
+    // CHECK-NEXT: [[XS1:%.*]] = getelementptr inbounds [[A]]* [[XS0]], i64 1
     // CHECK-NEXT: call void @_ZN7Elision1AC1ERKS0_([[A]]* [[XS1]], [[A]]* [[X]])
-    // CHECK-NEXT: [[XSB:%.*]] = bitcast [2 x [[A]]]* [[XS]] to [[A]]*
     A xs[] = { A(), x };
 
-    // CHECK-NEXT: store i64 2, i64* [[I]]
+    // CHECK-NEXT: [[BEGIN:%.*]] = getelementptr inbounds [2 x [[A]]]* [[XS]], i32 0, i32 0
+    // CHECK-NEXT: [[END:%.*]] = getelementptr inbounds [[A]]* [[BEGIN]], i64 2
     // CHECK-NEXT: br label
-    // CHECK:      [[I0:%.*]] = load i64* [[I]]
-    // CHECK-NEXT: icmp ne i64 [[I0]], 0
-    // CHECK-NEXT: br i1
-    // CHECK:      [[I1:%.*]] = load i64* [[I]]
-    // CHECK-NEXT: [[I2:%.*]] = sub i64 [[I1]], 1
-    // CHECK-NEXT: [[XSI:%.*]] = getelementptr inbounds [[A]]* [[XSB]], i64 [[I2]]
-    // CHECK-NEXT: call void @_ZN7Elision1AD1Ev([[A]]* [[XSI]])
-    // CHECK-NEXT: br label
+    // CHECK:      [[AFTER:%.*]] = phi [[A]]*
+    // CHECK-NEXT: [[CUR:%.*]] = getelementptr inbounds [[A]]* [[AFTER]], i64 -1
+    // CHECK-NEXT: call void @_ZN7Elision1AD1Ev([[A]]* [[CUR]])
+    // CHECK-NEXT: [[T0:%.*]] = icmp eq [[A]]* [[CUR]], [[BEGIN]]
+    // CHECK-NEXT: br i1 [[T0]],
 
     // CHECK:      call void @_ZN7Elision1AD1Ev([[A]]* [[X]])
   }
 
   // rdar://problem/8433352
-  // CHECK: define void @_ZN7Elision5test5Ev([[A]]* sret
+  // CHECK: define void @_ZN7Elision5test5Ev([[A]]* noalias sret
   struct B { A a; B(); };
   A test5() {
     // CHECK:      [[AT0:%.*]] = alloca [[A]], align 8
@@ -521,5 +517,23 @@ namespace PR8623 {
     // CHECK-NEXT: br label
     // CHECK:      ret void
     b ? A(2) : A(3);
+  }
+}
+
+namespace PR11365 {
+  struct A { A(); ~A(); };
+
+  // CHECK: define void @_ZN7PR113653fooEv(
+  void foo() {
+    // CHECK: [[BEGIN:%.*]] = getelementptr inbounds [3 x [[A:%.*]]]* {{.*}}, i32 0, i32 0
+    // CHECK-NEXT: [[END:%.*]] = getelementptr inbounds [[A]]* [[BEGIN]], i64 3
+    // CHECK-NEXT: br label
+
+    // CHECK: [[PHI:%.*]] = phi
+    // CHECK-NEXT: [[ELEM:%.*]] = getelementptr inbounds [[A]]* [[PHI]], i64 -1
+    // CHECK-NEXT: call void @_ZN7PR113651AD1Ev([[A]]* [[ELEM]])
+    // CHECK-NEXT: icmp eq [[A]]* [[ELEM]], [[BEGIN]]
+    // CHECK-NEXT: br i1
+    (void) (A [3]) {};
   }
 }

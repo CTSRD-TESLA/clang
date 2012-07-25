@@ -17,7 +17,7 @@ namespace M {
   struct Y : N::X { };
 }
 
-void f();
+void f(); // expected-note 2 {{'f' declared here}}
 
 void test_operator_adl(N::X x, M::Y y) {
   (void)(x + x);
@@ -46,7 +46,7 @@ namespace M {
   int g(N::X); // expected-note{{candidate function}}
 
   void test(N::X x) {
-    g(x); // expected-error{{call to 'g' is ambiguous; candidates are:}}
+    g(x); // expected-error{{call to 'g' is ambiguous}}
     int i = (g)(x);
 
     int g(N::X);

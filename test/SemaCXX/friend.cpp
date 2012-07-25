@@ -64,11 +64,11 @@ namespace test4 {
 }
 
 namespace rdar8529993 {
-struct A { ~A(); }; // expected-note {{nearly matches}}
+struct A { ~A(); };
 
 struct B : A
 {
-  template<int> friend A::~A(); // expected-error {{does not match}}
+  template<int> friend A::~A(); // expected-error {{destructor cannot be declared as a template}}
 };
 }
 
@@ -128,5 +128,13 @@ namespace test6_3 {
   void f() {
     vector<A> v(1);
     v.f();
+  }
+}
+
+namespace test7 {
+  extern "C" {
+    class X {
+      friend int f() { return 42; }
+    };
   }
 }

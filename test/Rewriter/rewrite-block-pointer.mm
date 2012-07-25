@@ -1,6 +1,11 @@
-// RUN: %clang_cc1 -x objective-c++ -Wno-return-type -fblocks -fms-extensions -rewrite-objc %s -o %t-rw.cpp
+// RUN: %clang_cc1 -x objective-c++ -Wno-return-type -fblocks -fms-extensions -rewrite-objc -fobjc-runtime=macosx-fragile-10.5 %s -o %t-rw.cpp
 // RUN: %clang_cc1 -fsyntax-only -Wno-address-of-temporary -D"SEL=void*" -D"__declspec(X)=" %t-rw.cpp
+// RUN: %clang_cc1 -x objective-c++ -Wno-return-type -fblocks -fms-extensions -rewrite-objc %s -o %t-modern-rw.cpp
+// RUN: %clang_cc1 -fsyntax-only -Wno-address-of-temporary -D"SEL=void*" -D"__declspec(X)=" %t-modern-rw.cpp
 // radar 7638400
+
+// rdar://11375908
+typedef unsigned long size_t;
 
 typedef void * id;
 void *sel_registerName(const char *);
@@ -86,5 +91,22 @@ void (^BLINT)(I<CoreDAVAccountInfoProvider>* ARG, INTF<CodeProvider, CoreDAVAcco
 void  test8608902() {
   BDVDiscoveryCompletionHandler ppp;
   ppp(1, 0);
+}
+
+void test9204669() {
+   __attribute__((__blocks__(byref))) char (^addChangeToData)();
+
+   addChangeToData = ^() {
+      return 'b';
+   };
+   addChangeToData();
+}
+
+void test9204669_1() {
+   __attribute__((__blocks__(byref))) void (^addChangeToData)();
+
+   addChangeToData = ^() {
+    addChangeToData();
+   };
 }
 

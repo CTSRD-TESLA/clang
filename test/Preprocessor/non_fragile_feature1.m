@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -triple i386-unknown-unknown %s
+// RUN: %clang_cc1 -triple i386-unknown-unknown -fobjc-runtime=gcc %s
 #ifndef __has_feature
 #error Should have __has_feature
 #endif
