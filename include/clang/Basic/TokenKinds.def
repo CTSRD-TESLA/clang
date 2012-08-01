@@ -428,9 +428,6 @@ KEYWORD(__thiscall                  , KEYALL)
 KEYWORD(__forceinline               , KEYALL)
 KEYWORD(__unaligned                 , KEYMS)
 
-// TESLA Extension.
-KEYWORD(__tesla_assert              , KEYALL)
-
 // OpenCL-specific keywords
 KEYWORD(__kernel                    , KEYOPENCL)
 ALIAS("kernel", __kernel            , KEYOPENCL)

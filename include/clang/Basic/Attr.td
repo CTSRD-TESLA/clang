@@ -613,11 +613,6 @@ def Pascal : InheritableAttr {
   let Spellings = [GNU<"pascal">];
 }
 
-def Tesla: InheritableAttr {
-  let Spellings = ["tesla", "__tesla"];
-  let Subjects = [Tag];
-}
-
 def TransparentUnion : InheritableAttr {
   let Spellings = [GNU<"transparent_union">];
 }

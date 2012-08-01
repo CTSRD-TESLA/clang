@@ -2974,21 +2974,6 @@ static void handleFormatAttr(Sema &S, Decl *D, const AttributeList &Attr) {
     D->addAttr(NewAttr);
 }
 
-static void HandleTeslaAttr(Sema &S, Decl *d, const AttributeList &Attr) {
-  if (Attr.getNumArgs() != 0) {
-    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments) << 0;
-    return;
-  }
-
-  if (!isa<TypeDecl>(d)) {
-    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
-      << Attr.getName() << 9 /* class */;
-    return;
-  }
-
-  d->addAttr(::new (S.Context) TeslaAttr(Attr.getLoc(), S.Context));
-}
-
 static void handleTransparentUnionAttr(Sema &S, Decl *D,
                                        const AttributeList &Attr) {
   // check the attribute arguments.
@@ -4221,7 +4206,6 @@ static void ProcessInheritableDeclAttr(Sema &S, Scope *scope, Decl *D,
   case AttributeList::AT_ObjCRequiresPropertyDefs: 
     handleObjCRequiresPropertyDefsAttr (S, D, Attr); 
     break;
-  case AttributeList::AT_Tesla:       HandleTeslaAttr       (D, Attr, S); break;
   case AttributeList::AT_Unused:      handleUnusedAttr      (S, D, Attr); break;
   case AttributeList::AT_ReturnsTwice:
     handleReturnsTwiceAttr(S, D, Attr);
