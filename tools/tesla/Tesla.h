@@ -112,16 +112,21 @@ public:
 /// A repetition of events.
 class Repetition : public TeslaEvent {
 public:
-  Repetition(TeslaEvent *ToRepeat,
-      bool HasMin, llvm::APInt Min, bool HasMax, llvm::APInt Max);
+  /** Construct a Repetition, taking ownership of Events passed in. */
+  Repetition(llvm::OwningArrayPtr<TeslaEvent*>& Events, unsigned Len,
+      llvm::APInt Min);
+  Repetition(llvm::OwningArrayPtr<TeslaEvent*>& Events, unsigned Len,
+      llvm::APInt Min, llvm::APInt Max);
 
+  void Init(llvm::OwningArrayPtr<TeslaEvent*>& Events);
   llvm::StringRef Description() const { return Descrip; }
 
   static Repetition* Parse(
       clang::CallExpr*, Location AssertionLocation, clang::ASTContext&);
 
 private:
-  llvm::OwningPtr<TeslaEvent> ToRepeat;
+  llvm::OwningArrayPtr<TeslaEvent*> Events;
+  unsigned Len;
 
   bool HasMin;
   llvm::APInt Min;

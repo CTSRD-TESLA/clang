@@ -131,10 +131,22 @@ TeslaEvent* TeslaEvent::Parse(Expr *E, Location AssertionLocation,
 
 
 
-Repetition::Repetition(TeslaEvent *ToRepeat,
-    bool HasMin, llvm::APInt Min, bool HasMax, llvm::APInt Max)
-  : ToRepeat(ToRepeat), HasMin(HasMin), Min(Min), HasMax(HasMax), Max(Max)
+
+Repetition::Repetition(OwningArrayPtr<TeslaEvent*>& Events, unsigned Len,
+    APInt Min)
+  : Len(Len), Min(Min), HasMax(false)
 {
+  Init(Events);
+}
+
+Repetition::Repetition(OwningArrayPtr<TeslaEvent*>& Events, unsigned Len,
+    APInt Min, APInt Max)
+  : Len(Len), Min(Min), HasMax(true), Max(Max)
+{
+  Init(Events);
+}
+
+void Repetition::Init(OwningArrayPtr<TeslaEvent*>& Events) {
   SmallString<8> Range;
   string MinStr = Min.toString(10, false);
   string MaxStr = Max.toString(10, false);
@@ -142,30 +154,46 @@ Repetition::Repetition(TeslaEvent *ToRepeat,
   if (HasMin) Range = "[" + MinStr + "," + (HasMax ? (MaxStr + "]") : ")");
   else Range = "(" + (HasMax ? ("," + MaxStr + "]") : "ANY)");
 
-  Descrip = ("repeat(" + Range + ": " + ToRepeat->Description() + ")").str();
+  Descrip = ("repeat(" + Range + ": ").str();
+  for (unsigned I = 0; I < Len; I++) {
+    assert(Events[I] != NULL);
+    Descrip += (Events[I]->Description() + " ").str();
+  }
+  Descrip += ")";
+
+  this->Events.reset(Events.take());
 }
 
 Repetition* Repetition::Parse(CallExpr *Call, Location AssertLoc,
     ASTContext& Ctx) {
-  if (Call->getNumArgs() != 3) {
-    Report("Repetition must have three arguments", Call->getLocStart(), Ctx)
+
+  unsigned Args = Call->getNumArgs();
+  if (Args < 3) {
+    Report("Repetition must have at least three arguments (min, max, events)",
+        Call->getLocStart(), Ctx)
       << Call->getSourceRange();
     return NULL;
   }
 
   APInt Min = ParseIntegerLiteral(Call->getArg(0), Ctx);
   APInt Max = ParseIntegerLiteral(Call->getArg(1), Ctx);
-  auto RepeatedExpr = Call->getArg(2);
-  TeslaEvent *ToRepeat = TeslaEvent::Parse(RepeatedExpr, AssertLoc, Ctx);
 
-  if (!ToRepeat) {
-    Report("Failed to parse repeated event", RepeatedExpr->getLocStart(), Ctx)
-      << RepeatedExpr->getSourceRange();
-    return NULL;
+  unsigned EventCount = Args - 2;
+  OwningArrayPtr<TeslaEvent*> Events(new TeslaEvent*[EventCount]);
+  for (unsigned I = 0; I < EventCount; I++) {
+    auto Event = Call->getArg(I + 2);
+    TeslaEvent *ToRepeat = TeslaEvent::Parse(Event, AssertLoc, Ctx);
+    Events[I] = ToRepeat;
+
+    if (!ToRepeat) {
+      Report("Failed to parse repeated event", Event->getLocStart(), Ctx)
+        << Event->getSourceRange();
+      return NULL;
+    }
   }
 
-  return new Repetition(
-      ToRepeat, Min.isNonNegative(), Min, Max.isNonNegative(), Max);
+  if (Max.isNegative()) return new Repetition(Events, EventCount, Min);
+  else return new Repetition(Events, EventCount, Min, Max);
 }
 
 
